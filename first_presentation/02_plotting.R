@@ -24,7 +24,7 @@ p_coverage <- ggplot() +
   geom_sf(
     data = gfh_now,
     color = "black",
-    fill = NA
+    fill = hdx_hex("tomato-hdx")
   ) +
   scale_fill_gradient(
     low = "lightgrey",
@@ -54,9 +54,9 @@ p_coverage
 
 p_coverage_future <- p_coverage +
   geom_sf(
-    data = gfh_future,
+    data = gfh_coverage,
     color = "black",
-    fill = NA
+    fill = hdx_hex("tomato-hdx")
   ) +
   labs(
     subtitle = "Future coverage"
@@ -117,7 +117,9 @@ p_floods +
 flood_pop <- crop(nga_pop, nga_extents, mask = TRUE) # total population in flooded areas
 gfh_flood_pop  <- crop(flood_pop, gfh_coverage, mask = TRUE) # population in flooded areas covered by GFH
 flood_niger_pop <- crop(flood_pop, nga_niger, mask = TRUE) # population flooded within 15km of Niger
+flood_rivers_pop <- crop(flood_pop, nga_rivers, mask = TRUE) # population flooded within 15km of Niger and Benue
 gfh_flood_niger_pop <- crop(gfh_flood_pop, nga_niger, mask = TRUE) # GFH population in flooded areas around Niger
+gfh_flood_rivers_pop <- crop(gfh_flood_pop, nga_rivers, mask = TRUE) # GFH population in flooded areas around Niger and Benue
 
 pops <- map(
   .x = list(flood_pop, gfh_flood_pop, flood_niger_pop, gfh_flood_niger_pop),

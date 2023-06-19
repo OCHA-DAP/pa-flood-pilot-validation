@@ -23,12 +23,12 @@ output_dir <- file.path(
 ###########################
 
 gfh_coverage <- map(
-  .x = c("added_in_dec", "aois_for_launch"),
+  .x = c("Nigeria_AOIs", "Nigeria_launched"),
   .f = \(layer) {
     read_sf(
       dsn = file.path(
         input_dir,
-        "Nigeria Cover areas with google FF.kml"
+        "Nigeria AOIs.kml"
       ),
       layer = layer
     )
@@ -43,12 +43,7 @@ gfh_coverage <- map(
 
 gfh_now <- gfh_coverage %>%
   filter(
-    coverage == "added_in_dec"
-  )
-
-gfh_future <- gfh_coverage %>%
-  filter(
-    coverage == "aois_for_launch"
+    coverage == "Nigeria_launched"
   )
 
 #################################
