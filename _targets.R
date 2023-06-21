@@ -4,6 +4,8 @@ library(tidyverse)
 library(rhdx)
 library(terra)
 library(ncdf4)
+library(readxl)
+library(janitor)
 # library(tarchetypes)
 tar_source()
 
@@ -24,6 +26,21 @@ gfh_dsn <- file.path(
   input_dir,
   "Nigeria AOIs.kml"
 )
+hydrobasin_dsn <- file.path(
+  input_dir,
+  "hybas_af_lev01-12_v1c"
+) 
+google_nowcast_fp <- file.path(
+  input_dir,
+  "historic_nowcasts"
+) 
+nga_cod_gdb <- file.path(
+  Sys.getenv("AA_DATA_DIR"),
+  "public",
+  "raw",
+  "nga",
+  "cod_ab",
+  "nga_adm.shp.zip" )
 
 list(
   # Track Files -------------------------------------------------------------
@@ -45,14 +62,10 @@ list(
     format = "file"
   ),
   tar_target(
-    name = nga_adm_fp,
+    name = gauge_google_fp,
     command = file.path(
-      Sys.getenv("AA_DATA_DIR"),
-      "public",
-      "raw",
-      "nga",
-      "cod_ab",
-      "nga_admbnda_adm0_osgof_20190417.shp"
+      input_dir,
+      "nga_google_gauges.xlsx"
     ),
     format = "file"
   ),
@@ -61,7 +74,18 @@ list(
   ## ADM 0 ####
   tar_target(
     name = nga_adm,
-    command = read_sf(nga_adm_fp)
+    command = read_shape_zip(path = nga_cod_gdb,layer = c("nga_admbnda_adm0_osgof_20190417",
+                                                          "nga_admbnda_adm1_osgof_20190417",
+                                                          "nga_admbnda_adm2_osgof_20190417")) %>% 
+      set_names(c("adm0","adm1","adm2"))
+  ),
+  tar_target(
+    name = gauge_google_wb,
+    command = read_all_tabs(gauge_google_fp,clean_names = T,skip = 0)
+  ),
+  tar_target(
+    name= gauge_google_sp,
+    command = st_as_sf(gauge_google_wb$metadata,coords=c("longitude","latitude"),crs=4326)
   ),
   tar_target(
     name = gfh_coverage,
@@ -73,6 +97,20 @@ list(
           )
       })
   ),
+  tar_target(
+    name = basins_clipped,
+    command = load_clipped_hydrobasins(
+      lyr_names = c("hybas_af_lev04_v1c","hybas_af_lev05_v1c"),
+      mask = nga_adm$adm0
+      )
+  ),
+  tar_target(
+    name= gauges_basin_google,
+    command= basins_clipped %>% 
+      map(\(lyr){
+        st_join(gauge_google_sp,lyr)
+      }
+  )),
   tar_target(
     name = gfh_now,
     command = gfh_coverage %>%
@@ -97,6 +135,34 @@ list(
       ) %>%
       st_transform(
         "EPSG:4326"
+      )
+  ),
+  tar_target(
+    name = google_nowcast,
+    command = map(
+      .x = list.files(google_nowcast_fp,
+        full.names = TRUE
+      ),
+      .f = ~read_csv(.x) %>%
+        mutate(hybas_station = str_extract(.x, "([0-9]+)(?=.csv$)"))
+    ) %>%
+      list_rbind()
+  ),
+  tar_target(
+    name = google_nowcast_class,
+    command = classify_google_nowcast_data(nowcast = google_nowcast,rp_df = gauge_google_wb$return_period)
+  ),
+  tar_target(
+    name = google_nowcast_basin,
+    command= gauges_basin_google %>% 
+      map(
+        \(basin_level_df){
+          basin_level_df %>% 
+            st_drop_geometry() %>% 
+            left_join(
+              google_nowcast_class, by="gauge_id"
+            )
+        }
       )
   )
 )
