@@ -22,18 +22,7 @@ input_dir <- file.path(
   Sys.getenv("GFH_DATA_DIR"),
   "inputs"
 )
-gfh_dsn <- file.path(
-  input_dir,
-  "Nigeria AOIs.kml"
-)
-hydrobasin_dsn <- file.path(
-  input_dir,
-  "hybas_af_lev01-12_v1c"
-) 
-google_nowcast_fp <- file.path(
-  input_dir,
-  "historic_nowcasts"
-) 
+
 nga_cod_gdb <- file.path(
   Sys.getenv("AA_DATA_DIR"),
   "public",
@@ -71,7 +60,9 @@ list(
   ),
 
   # Load Data ---------------------------------------------------------------
-  ## ADM 0 ####
+  ## Base Data ####
+  # base data includes admin zones, rivers, basins, 
+  ### Admin 0-2 ####
   tar_target(
     name = nga_adm,
     command = read_shape_zip(path = nga_cod_gdb,layer = c("nga_admbnda_adm0_osgof_20190417",
@@ -79,50 +70,14 @@ list(
                                                           "nga_admbnda_adm2_osgof_20190417")) %>% 
       set_names(c("adm0","adm1","adm2"))
   ),
-  tar_target(
-    name = gauge_google_wb,
-    command = read_all_tabs(gauge_google_fp,clean_names = T,skip = 0)
-  ),
-  tar_target(
-    name= gauge_google_sp,
-    command = st_as_sf(gauge_google_wb$metadata,coords=c("longitude","latitude"),crs=4326)
-  ),
-  tar_target(
-    name = gfh_coverage,
-    command = c("Nigeria_AOIs", "Nigeria_launched") %>%
-      map_dfr(\(lyr_name){
-        st_read(dsn = gfh_dsn, layer = lyr_name) %>%
-          mutate(
-            coverage = lyr_name
-          )
-      })
-  ),
-  tar_target(
-    name = basins_clipped,
-    command = load_clipped_hydrobasins(
-      lyr_names = c("hybas_af_lev04_v1c","hybas_af_lev05_v1c"),
-      mask = nga_adm$adm0
-      )
-  ),
-  tar_target(
-    name= gauges_basin_google,
-    command= basins_clipped %>% 
-      map(\(lyr){
-        st_join(gauge_google_sp,lyr)
-      }
-  )),
-  tar_target(
-    name = gfh_now,
-    command = gfh_coverage %>%
-      filter(coverage == "Nigeria_launched")
-  ),
-  ## River MultiLines ####
+  ### River MultiLines ####
   tar_target(
     name = nga_riv,
     command = pull_dataset("741c6f20-6956-420d-aae4-37015cdd1ad4") %>%
       get_resource(2) %>%
       read_resource()
   ),
+  # buffer rivers 
   tar_target(
     name = nig_riv_b15k,
     command = nga_riv %>%
@@ -137,10 +92,55 @@ list(
         "EPSG:4326"
       )
   ),
+  ### Hydrobasins ####
+  # clipping basin levels 4 & 5 to NGA
+  tar_target(
+    name = basins_clipped,
+    command = load_clipped_hydrobasins(
+      gdb=file.path(input_dir,"hybas_af_lev01-12_v1c"), 
+      lyr_names = c("hybas_af_lev04_v1c","hybas_af_lev05_v1c"),
+      mask = nga_adm$adm0
+    )
+  ),
+  ## Google Inputs ####
+  
+  ### Flood Extent Kmls ####
+  # note: not yet using this in the _targets pipeline - just adding as a simple target since it is
+  # in other wrangling/analysis scripts
+  tar_target(
+    name = gfh_coverage,
+    command = c("Nigeria_AOIs", "Nigeria_launched") %>%
+      map_dfr(\(lyr_name){
+        st_read(
+          dsn = nga_aoi_kml_fp,
+          layer = lyr_name
+        ) %>%
+          mutate(
+            coverage = lyr_name
+          )
+      })
+  ),
+  tar_target(
+    name = gfh_now,
+    command = gfh_coverage %>%
+      filter(coverage == "Nigeria_launched")
+  ),
+  ### Google real-time nowcast/forecast ####
+  
+  # once we have access to the googlesheet - we will change to `{googlesheets}` package for reading.
+  tar_target(
+    name = gauge_google_wb,
+    command = read_all_tabs(gauge_google_fp,
+                            clean_names = T,
+                            skip = 0)
+  ),
+  ### Google historical-reanalysis (nowcast) ####
+  # compile all historical data into one data.frame
   tar_target(
     name = google_nowcast,
     command = map(
-      .x = list.files(google_nowcast_fp,
+      .x = list.files(
+        file.path(input_dir,"historic_nowcasts"),
         full.names = TRUE
       ),
       .f = ~read_csv(.x) %>%
@@ -148,10 +148,34 @@ list(
     ) %>%
       list_rbind()
   ),
+  # Wrangling ####
+  
+  ## Realtime (nowcast & forecast) from google ####
+  
+  # create spatial object of gauge locations
+  tar_target(
+    name= gauge_google_sp,
+    command = st_as_sf(gauge_google_wb$metadata,coords=c("longitude","latitude"),crs=4326)
+  ),
+  # assign each gauge to a basin (for both basin levels 4 & 5)
+  tar_target(
+    name= gauges_basin_google,
+    command= basins_clipped %>% 
+      map(\(lyr){
+        st_join(gauge_google_sp,lyr)
+      }
+      )),
+  
+  ## Historical nowcast data ####
+  # based on calculated RPs (from google) classify each prediction (daily 1981-current) for each gauge
+  # we classify w/ logicals based on whether value is greater than or equal to RPs: 2,5,20
+  # also flag
   tar_target(
     name = google_nowcast_class,
-    command = classify_google_nowcast_data(nowcast = google_nowcast,rp_df = gauge_google_wb$return_period)
+    command = classify_google_nowcast_data(nowcast = google_nowcast,
+                                           rp_df = gauge_google_wb$return_period)
   ),
+  # take the classified now class data and just add the basin id's
   tar_target(
     name = google_nowcast_basin,
     command= gauges_basin_google %>% 
@@ -164,5 +188,73 @@ list(
             )
         }
       )
+  ),
+  # might want to turn this into a function so that we can easily change the +/- days parameter
+  tar_target(
+    name = nowcast_rp2_breach_pct_basin_gauges,
+    command = google_nowcast_basin %>%
+      map(\(dft){
+        # a little wrangling - should do in earlier step an rm from here later
+        dft_c <- dft %>% 
+          rename(
+            hybas_id = HYBAS_ID
+          ) %>% 
+          mutate(
+            hybas_id = as.character(hybas_id)
+          )
+        
+        distinct_flags <- dft_c %>%
+          filter(rp_2_flag) %>%
+          distinct(
+            hybas_id,
+            gauge_id,
+            time
+            )
+        
+        distinct_flags %>% 
+          pmap_dfr(function(...) {
+            current <- tibble(...)
+            
+            # filter ncst to +/-x days
+            ncst_filtered <-   dft_c %>% 
+              filter(
+                time>= current$time-5,
+                time<= current$time+5,
+                hybas_id==current$hybas_id
+              )
+            # get gauge count per basin - could grab this externally as well
+            basin_gauge_count <- dft_c %>% 
+              group_by(hybas_id,
+                       yr=year(time),
+                       time) %>% 
+              summarise(
+                num_gauge = n(),.groups = "drop"
+              ) %>% 
+              distinct(hybas_id,num_gauge)
+            
+            ncst_filtered %>% 
+              mutate(
+                date= current$time
+              ) %>% 
+              group_by(
+                hybas_id,
+                date,
+                gauge_id,
+                .drop = F,
+              ) %>% 
+              summarise(
+                discharge_crossed = any(gte_rp2),.groups = "drop_last"
+              ) %>% 
+              summarise(
+                gauges_crossed =sum(discharge_crossed,na.rm=T) ,
+                .groups="drop"
+              ) %>% 
+              left_join(basin_gauge_count, by="hybas_id") %>% 
+              mutate(
+                pct_crossed = gauges_crossed/num_gauge
+              ) 
+          }) # close pmap
+      }) # close first map
+
   )
 )
