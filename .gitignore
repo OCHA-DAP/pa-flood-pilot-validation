@@ -3,3 +3,8 @@
 .RData
 .Ruserdata
 .scrapy
+
+
+exploration/hybas_exploration_files/*
+*.gif
+*.html

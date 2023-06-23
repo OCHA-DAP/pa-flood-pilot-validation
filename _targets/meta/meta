@@ -3,7 +3,6 @@ name|type|data|command|depend|seed|path|time|size|bytes|format|repository|iterat
 basins_clipped|stem|8abfeece9cb77a07|82bc3d952d867bc0|138a7156d2a31d0b|1636979991||t19531.3301049761s|bc8304d21f68e3ea|919118|rds|local|vector|||4.134||
 classify_google_nowcast_data|function|136b6533deea7a59|||||||||||||||
 classify_google_nowcast_data2|function|136b6533deea7a59|||||||||||||||
-data|stem|6afcb05a96a54f6c|43fae4011a0626f4|136bf5e07fbd9b1c|1588979285||t19527.4770543157s|d07e2e962de596ec|1750|rds|local|vector|||0.005||
 gauge_google_fp|stem|3c8d36f24065554c|e9e45c1c2c08c3bb|ca029d74dc06e2fe|-1937308158|/Users/zackarno/Library/CloudStorage/GoogleDrive-Zachary.arno@humdata.org/Shared drives/Predictive Analytics/Collaborations/GoogleFloodForecasting/data/inputs/nga_google_gauges.xlsx|t19531.5117451511s|952be65298c78be7|45376|file|local|vector|||0||
 gauge_google_sp|stem|40c74d98072b56f9|f356e057036f757a|9f805f9b386a4fa9|927278688||t19531.5119969933s|9a8a4f5539bd781a|1283|rds|local|vector|||0.011||
 gauge_google_wb|stem|543fb28a460e89c6|5b720e80ee78837e|c5b9f1278a914dc3|2007145002||t19531.5119967942s|bbca966cb3ab6859|7331|rds|local|vector|||0.367||
@@ -13,17 +12,13 @@ gfh_dsn|object|3d079ce069bcbec1|||||||||||||||
 gfh_now|stem|9dee5b86f08b6890|38a2971aa3b5251a|41c1efabf5aa367c|-560214675||t19527.5375162991s|96c0fac4a3625e56|45442|rds|local|vector|||0.005||
 google_nowcast|stem|03913d9c37c954ec|9b5ba42b48bffd4e|1bf376a0cfdc7ca9|11681687||t19531.3300555444s|0fec2e0138dc62bc|1956057|rds|local|vector|||0.511||
 google_nowcast_basin|stem|4a9a0911dd992a2e|76988371f6745601|f74ecff93efb4c43|1577530748||t19529.7541849268s|a0ee932be00ed380|4124406|rds|local|vector|||0.28||
-google_nowcast_basin2|stem|4a9a0911dd992a2e|2f576f49a7facb24|c25ea46d87768d04|642515640||t19529.4850002911s|a0ee932be00ed380|4124406|rds|local|vector|||0.282||
 google_nowcast_class|stem|a4f6c5d0e6d0940e|8b698a5b789b9506|2fc0adda588c4b21|-1177865100||t19531.5120047999s|76eeb353beda092f|1988892|rds|local|vector|||0.121||
-google_nowcast_class2|stem|a4f6c5d0e6d0940e|7a741fd2b946393f|40be46a2eac52aab|-584166369||t19529.4849805826s|76eeb353beda092f|1988892|rds|local|vector|||0.142||
 google_nowcast_fp|object|828dd56bf64454aa|||||||||||||||
 hydrobasin_dsn|object|e460962d8e09c534|||||||||||||||
 input_dir|object|bacdab1a143da1c6|||||||||||||||
 lim_alert|function|59cfe217b4d9ce31|||||||||||||||
 load_clipped_hydrobasins|function|b4394a07cbf94f8a|||||||||||||||
-model|stem|d8e1fb9dc5567626|ae83bc723fe2997c|326e0a6129599004|1816327236||t19527.4770544378s|1254f8a9a0ffbd1f|107|rds|local|vector|||0.003||
 nga_adm|stem|8ea05e5100d99b18|c204d6a93e29b8e4|441995593667527f|1443131355||t19529.3204766287s|6309afacaac4e712|2257682|rds|local|vector|||0.098||
-nga_adm_fp|stem|61faf41ae64b73c2|1a68ffa0d1c593c1|a532b606f052f163|493868291|/Users/zackarno/Library/CloudStorage/GoogleDrive-Zachary.arno@humdata.org/Shared drives/Predictive Analytics/CERF Anticipatory Action/General - All AA projects/Data/public/raw/nga/cod_ab/nga_admbnda_adm0_osgof_20190417.shp|t18009.3138194444s|424fbfd22f9887ce|103004|file|local|vector|||0.001||
 nga_aoi_kml_fp|stem|024800e01ad7ebe3|4c127df4f6c6096b|ca029d74dc06e2fe|287733114|/Users/zackarno/Library/CloudStorage/GoogleDrive-Zachary.arno@humdata.org/Shared drives/Predictive Analytics/Collaborations/GoogleFloodForecasting/data/inputs/Nigeria AOIs.kml|t19508.3442277662s|b437d221dbf120f4|530718|file|local|vector|||0||
 nga_cod_gdb|object|33710a2b69b99fb0|||||||||||||||
 nga_pop_r_fp|stem|919ab9e51076b1b3|a37345353cab0f67|ca029d74dc06e2fe|613649790|/Users/zackarno/Library/CloudStorage/GoogleDrive-Zachary.arno@humdata.org/Shared drives/Predictive Analytics/Collaborations/GoogleFloodForecasting/data/inputs/nga_pop/nga_general_2020.tif|t19500.4635921528s|abbf47ae1e1adad4|13478976524|file|local|vector|||0||
