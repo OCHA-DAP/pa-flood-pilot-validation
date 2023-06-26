@@ -137,7 +137,7 @@ list(
   ### Google historical-reanalysis (nowcast) ####
   # compile all historical data into one data.frame
   tar_target(
-    name = google_nowcast,
+    name = google_historical,
     command = map(
       .x = list.files(
         file.path(input_dir,"historic_nowcasts"),
@@ -171,28 +171,28 @@ list(
   # we classify w/ logicals based on whether value is greater than or equal to RPs: 2,5,20
   # also flag
   tar_target(
-    name = google_nowcast_class,
-    command = classify_google_nowcast_data(nowcast = google_nowcast,
+    name = google_historical_class,
+    command = classify_google_historical_data(historical = google_historical,
                                            rp_df = gauge_google_wb$return_period)
   ),
   # take the classified now class data and just add the basin id's
   tar_target(
-    name = google_nowcast_basin,
+    name = google_historical_basin,
     command= gauges_basin_google %>% 
       map(
         \(basin_level_df){
           basin_level_df %>% 
             st_drop_geometry() %>% 
             left_join(
-              google_nowcast_class, by="gauge_id"
+              google_historical_class, by="gauge_id"
             )
         }
       )
   ),
   # might want to turn this into a function so that we can easily change the +/- days parameter
   tar_target(
-    name = nowcast_rp2_breach_pct_basin_gauges,
-    command = google_nowcast_basin %>%
+    name = ghistorical_rp2_breach_pct_basin_gauges,
+    command = google_historical_basin %>%
       map(\(dft){
         # a little wrangling - should do in earlier step an rm from here later
         dft_c <- dft %>% 

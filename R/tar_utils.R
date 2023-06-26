@@ -18,10 +18,10 @@ lim_alert <- function(x, lim) {
   x >= lim & lag(x) < lim
 }
 
-classify_google_nowcast_data <- function(nowcast=google_nowcast, rp_df=gauge_google_wb$return_period ){
+classify_google_historical_data <- function(historical=google_historical, rp_df=gauge_google_wb$return_period ){
   
   # since each gauge has unique RPs we need to split the nowcast data by gauge id before classifyng
-  nowcast_split <- nowcast %>% 
+  historical_split <- historical %>% 
     mutate(
       gauge_id = paste0("hybas_",hybas_station)
     ) %>% 
@@ -35,7 +35,7 @@ classify_google_nowcast_data <- function(nowcast=google_nowcast, rp_df=gauge_goo
       rp_yr = parse_number(name)
     )  
   
-  nowcast_classified <- nowcast_split %>% 
+  historical_classified <- historical_split %>% 
     imap_dfr(
       \(dft,gid){
         rp_df_temp<- rp_df_long %>% 
@@ -52,7 +52,7 @@ classify_google_nowcast_data <- function(nowcast=google_nowcast, rp_df=gauge_goo
           )
       }
     )
-  return(nowcast_classified)
+  return(historical_classified)
   
   
 }
