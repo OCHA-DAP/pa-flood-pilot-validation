@@ -6,6 +6,7 @@ library(terra)
 library(ncdf4)
 library(readxl)
 library(janitor)
+library(googlesheets4)
 # library(tarchetypes)
 tar_source()
 
@@ -128,11 +129,15 @@ list(
   ### Google real-time nowcast/forecast ####
   
   # once we have access to the googlesheet - we will change to `{googlesheets}` package for reading.
+  # tar_target(
+  #   name = gauge_google_wb,
+  #   command = read_all_tabs(gauge_google_fp,
+  #                           clean_names = T,
+  #                           skip = 0)
+  # ),
   tar_target(
     name = gauge_google_wb,
-    command = read_all_tabs(gauge_google_fp,
-                            clean_names = T,
-                            skip = 0)
+    command = read_gauge_googlesheets(url = Sys.getenv("GFH_GAUGE_URL"))  
   ),
   ### Google historical-reanalysis (nowcast) ####
   # compile all historical data into one data.frame
