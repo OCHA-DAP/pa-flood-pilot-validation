@@ -1,0 +1,206 @@
+---
+title: "Realtime Monitoring"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: true
+        toc_depth: 3
+date: "2023-06-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  eval = TRUE,
+  results = "asis"
+)
+```
+
+
+```{r libs}
+library(targets)
+library(sf)
+library(tidyverse)
+library(gghdx)
+library(tmap)
+library(janitor)
+gghdx()
+tar_load(gauge_google_sp)
+tar_load(gauge_google_wb)
+tar_load(gauges_basin_google)
+tar_load(nga_adm)
+tar_load(basins_clipped)
+```
+
+```{r}
+
+
+g_realtime_gauge <- gauge_google_wb %>% 
+  keep_at(at = ~str_detect(.x,"hybas_")) %>% 
+  bind_rows() %>% 
+  mutate(date= dmy(date))
+
+
+g_realtime_latest <- g_realtime_gauge %>% 
+  group_by(gauge_id) %>% 
+  filter(
+    date==max(date)
+  ) %>% 
+  select(date, gauge_id, contains("discharge"),contains("return"))
+
+pred_df <- gauges_basin_google %>% 
+  map(
+    ~.x %>% 
+      st_drop_geometry() %>% 
+      clean_names() %>% 
+      select(gauge_id,river, hybas_id,level) %>% 
+      left_join(g_realtime_latest) %>% 
+      pivot_longer(cols = matches("discharge")) %>% 
+      mutate(
+        leadtime = replace_na( parse_number(name),0),
+        date_predict = date + leadtime
+  )
+  )
+```
+
+
+```{r pressure, echo=FALSE}
+
+realtime_vs_rps <- pred_df %>% 
+  map(
+    ~.x %>% 
+  mutate(
+    gte_2_rp = value >= x2_years_return_period,
+    gte_5_rp = value >= x5_years_return_period,
+    gte_20_rp = value >= x20_years_return_period
+  ) %>% 
+  group_by(hybas_id,gauge_id) %>% 
+  summarise(
+    gte_2_rp= any(gte_2_rp),
+    gte_5_rp= any(gte_5_rp),
+    gte_20_rp= any(gte_20_rp),
+    rp_class= case_when(
+      gte_20_rp ~ ">= 20 year RP",
+      gte_5_rp ~ ">= 5 year RP",
+      gte_2_rp ~ ">= 2 year RP",
+      .default = "No threshold exceeded"
+    ),.groups="drop"
+  ) %>% 
+    mutate(rp_class= fct_expand(rp_class,c("No threshold exceeded",
+                                           ">= 2 year RP",
+                                           ">= 5 year RP",
+                                           ">= 20 year RP")))
+  )
+
+
+
+p_gauge_pred_by_basin <- pmap(
+  list(pred_df,
+     realtime_vs_rps,
+     c("Basin Level 4","Basin Level 5")
+     ),
+     \(pred_data_df, rp_compare_df,plot_subtitle){
+       pred_data_df %>% 
+         left_join(rp_compare_df, by=c("hybas_id","gauge_id")) %>% 
+         ggplot(aes(x=date_predict,y=value,
+                    group=gauge_id,
+                    color=rp_class))+
+         geom_line(alpha=0.6)+
+         scale_x_date(breaks = "1 day",date_labels = "%m-%d")+
+         scale_color_manual(drop=FALSE,
+                         values=c(`No threshold exceeded`="#43a2ca",
+                                  `>= 2 year RP` = "#f03b20",
+                                  `>= 5 year RP` = "#bd0026",
+                                  `>= 20 year RP` ="#7a0177"
+                                  )
+                              )+
+         facet_wrap(~hybas_id,ncol=1,scales = "free_y")+
+         labs(y= "Discharge (m3/s)",
+              title ="Predicted discharge at gauge",
+              subtitle = plot_subtitle
+         )+
+       theme(
+         axis.text.x = element_text(angle=90),
+         axis.title.x = element_blank(),
+         legend.title = element_blank()
+       )
+     })  
+
+```
+
+
+```{r}
+basin_pct_flagged <- realtime_vs_rps %>%
+  map(\(dft){
+  dft %>% 
+      group_by(hybas_id) %>% 
+      summarise(
+        num_gauges=n(),
+        across(
+          matches("^gte_"), ~sum(.x)/num_gauges,.names = "pct_{.col}"
+        ),.groups="drop"
+      ) %>% 
+      mutate(
+        pct_class = case_when(
+          pct_gte_20_rp>=0.5~ ">= 50 % gauges exceeding 20 year RP",
+          pct_gte_5_rp>=0.5~ ">= 50 % gauges exceeding 5 year RP",
+          pct_gte_2_rp>=0.5~ ">= 50 % gauges exceeding 2 year RP",
+          pct_gte_2_rp<0.5~ "< 50 % gauges exceeding 2 year RP"
+        ),
+        pct_class = fct_expand(pct_class,c("< 50 % gauges exceeding 2 year RP",
+                               ">= 50 % gauges exceeding 2 year RP",
+                                ">= 50 % gauges exceeding 5 year RP",
+                               ">= 50 % gauges exceeding 20 year RP"))
+        )
+  })
+
+
+
+map_basin_pcts <- basin_pct_flagged %>% 
+  map2(basins_clipped,
+       \(basin_stats, basin_sp){
+         basin_sp_w_stats <- basin_sp %>%
+           clean_names() %>% 
+           left_join(basin_stats, by ="hybas_id") %>% 
+           filter(!is.na(pct_class))
+         tm_shape(basin_sp_w_stats)+
+           tm_polygons(col= "pct_class",
+                       palette= c("#43a2ca",
+                                   "#f03b20",
+                                  "#bd0026",
+                                  "#7a0177"),
+                       title="classification",border.col = "blue")+
+           tm_shape(gauge_google_sp)+
+           tm_dots()+
+           tm_shape(nga_adm$adm1)+
+           tm_borders(col="lightgrey")
+         
+         
+       }
+  )
+```
+
+## Level 4 Basin
+
+```{r ,fig.height=7}
+p_gauge_pred_by_basin$hybas_af_lev04_v1c
+```
+
+```{r}
+map_basin_pcts$hybas_af_lev04_v1c
+```
+
+## Level 5 Basin
+
+```{r, fig.height=7}
+p_gauge_pred_by_basin$hybas_af_lev05_v1c
+```
+
+```{r}
+map_basin_pcts$hybas_af_lev05_v1c
+```
+
+# Affected States
+# Affected LGAS
