@@ -1,13 +1,14 @@
 name|type|data|command|depend|seed|path|time|size|bytes|format|repository|iteration|parent|children|seconds|warnings|error
-.Random.seed|object|0bf47f15caf14dd6|||||||||||||||
+.Random.seed|object|78c16f093c1d1ee0|||||||||||||||
 basins_clipped|stem|8abfeece9cb77a07|82bc3d952d867bc0|138a7156d2a31d0b|1636979991||t19531.3301049761s|bc8304d21f68e3ea|919118|rds|local|vector|||4.134||
 classify_google_historical_data|function|cf38236ce6010a78|||||||||||||||
 classify_google_nowcast_data|function|136b6533deea7a59|||||||||||||||
 classify_google_nowcast_data2|function|136b6533deea7a59|||||||||||||||
-g_realtime_gauge|stem|be73660bab83d3ce|beb80f5b858a031f|ce21825d7737d991|1360334417||t19556.5749514224s|cbd34aee0cc11388|6429|rds|local|vector|||0.009||
+g_realtime_gauge|stem|3b2a991c49118bc1|beb80f5b858a031f|28750e93c2ac2a41|1360334417||t19556.5995696321s|e2f7ad4b9528f042|5949|rds|local|vector|||0.028|1m22mThere was 1 warning in mutate.1m22m36mℹ39m In argument date  dmydate.Caused by warning33m39m All formats failed to parse. No formats found.|
 gauge_google_fp|stem|3c8d36f24065554c|e9e45c1c2c08c3bb|ca029d74dc06e2fe|-1937308158|/Users/zackarno/Library/CloudStorage/GoogleDrive-Zachary.arno@humdata.org/Shared drives/Predictive Analytics/Collaborations/GoogleFloodForecasting/data/inputs/nga_google_gauges.xlsx|t19531.5117451511s|952be65298c78be7|45376|file|local|vector|||0||
-gauge_google_sp|stem|702ae520aa14b8d4|f356e057036f757a|cc5a82bb16efc952|927278688||t19556.5749512728s|5e14a6d44c7f8f72|2068|rds|local|vector|||0.013||
-gauge_google_wb|stem|802f24f6b6f5cebb|f54f3a6d1c927d45|8102c2b750058974|2007145002||t19556.57495097s|2d9512167c980b61|10639|rds|local|vector|||246.842||
+gauge_google_sp|stem|702ae520aa14b8d4|f356e057036f757a|452baa25bf158ca7|927278688||t19556.5995692761s|5e14a6d44c7f8f72|2068|rds|local|vector|||0.011||
+gauge_google_wb|stem|39695f7b4517e6cf|6e8cd476bfe2efc9|9838e1f0514d278b|2007145002||t19556.6006610037s|059a7a3446897509|10223|rds|local|vector|||0.282||
+gauge_google_wb_full|stem|802f24f6b6f5cebb|f54f3a6d1c927d45|8102c2b750058974|61998505||t19556.5995658575s|2d9512167c980b61|10639|rds|local|vector|||132.594||
 gauges_basin_google|stem|e9393d08199ce112|58c28aed5126267a|5e58fff973f7d83b|1696525980||t19556.5749630695s|4f6ffb4e20d1d93f|3740|rds|local|vector|||0.218||
 gfh_coverage|stem|496ca03c934cecd6|3a4db9b7b7eb8414|587c56888f4bd6ad|1267770128||t19531.3300563943s|e61c63190e1419af|119824|rds|local|vector|||0.056||
 gfh_dsn|object|3d079ce069bcbec1|||||||||||||||
@@ -15,7 +16,7 @@ gfh_now|stem|9dee5b86f08b6890|38a2971aa3b5251a|41c1efabf5aa367c|-560214675||t195
 ghistorical_rp2_breach_pct_basin_gauges|stem|f1cc5e9d6402474d|2b3f844b5cc8df4c|45a396a5c459ddbe|-997337914||t19556.5781385808s|138dd220e8351264|3412|rds|local|vector|||272.725||
 google_historical|stem|03913d9c37c954ec|9b5ba42b48bffd4e|1bf376a0cfdc7ca9|-606912854||t19534.3932794644s|0fec2e0138dc62bc|1956057|rds|local|vector|||0.509||
 google_historical_basin|stem|b202fb1f48da3275|99b57b634d6f2180|4579130ca9619d92|-1310850209||t19556.574981922s|dc0cf7c8488c6757|4127855|rds|local|vector|||0.218||
-google_historical_class|stem|a4f6c5d0e6d0940e|d768cee2f2df538b|6fc36087aa31bdd0|827694615||t19556.5749603799s|76eeb353beda092f|1988892|rds|local|vector|||0.224||
+google_historical_class|stem|a4f6c5d0e6d0940e|d768cee2f2df538b|8ad0c038b9f75c46|827694615||t19556.599578715s|76eeb353beda092f|1988892|rds|local|vector|||0.229||
 google_nowcast_fp|object|828dd56bf64454aa|||||||||||||||
 hydrobasin_dsn|object|e460962d8e09c534|||||||||||||||
 input_dir|object|bacdab1a143da1c6|||||||||||||||
