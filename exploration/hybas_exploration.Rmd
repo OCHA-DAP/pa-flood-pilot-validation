@@ -38,8 +38,8 @@ tar_load(basins_clipped)
 tar_load(gauge_google_sp)
 tar_load(nga_adm)
 tar_load(gauge_google_wb) # forecast @ gauge & gauge metdata
-tar_load(google_nowcast) # gauge nowcast/historical
-tar_load(google_nowcast_basin) # nowcast attached to each basin & classified by RP
+tar_load(google_historical) # gauge nowcast/historical
+tar_load(google_historical_basin) # nowcast attached to each basin & classified by RP
 tar_load(nga_riv) # rivers
 ```
 
@@ -159,7 +159,7 @@ gauge_google_wb$return_period %>%
 Quickly see very different discharge dynamics at different gauges. Some of these different characteristics are captured by RP values so let's see how it looks if colored by RP value. It makes sense, the further we go downstream the higher the RP 2 values.
 
 ```{r out.width="100%", fig.align="center"}
-google_nowcast_basin$hybas_af_lev04_v1c %>% 
+google_historical_basin$hybas_af_lev04_v1c %>% 
   ggplot(aes(x=time, y= prediction,group=gauge_id))+
   geom_line()+
   labs(y="predicted discharge (m3/s)")+
@@ -172,7 +172,7 @@ google_nowcast_basin$hybas_af_lev04_v1c %>%
   )
 
 # wide format could be useful for PCA?
-# google_nowcast_basin$hybas_af_lev04_v1c %>% 
+# google_historical_basin$hybas_af_lev04_v1c %>% 
 #   select(time,gauge_id,prediction) %>% 
 #   pivot_wider(names_from = gauge_id, values_from = prediction)
 ```
@@ -202,7 +202,7 @@ We had the idea that we could use RP values as thresholds, but that we would wan
   + will start with x= 50 % and RP = 2 year
 
 ```{r}
-pct_gauges_gt_rp2_by_day<- google_nowcast_basin %>% 
+pct_gauges_gt_rp2_by_day<- google_historical_basin %>% 
   map(\(dft){
     dft %>% 
       group_by(hybas_id = as.character(HYBAS_ID),
@@ -286,7 +286,7 @@ From here on out we will use the term threshold breach to refer to
 So how to account for consecutive days - instead of flagging **every day** the discharge is above the RP value let's flag only the initial crossings.
 
 ```{r plot-allBreach, out.width="100%", fig.align="center"}
-google_nowcast_basin$hybas_af_lev04_v1c %>% 
+google_historical_basin$hybas_af_lev04_v1c %>% 
   mutate(
     hybas_id = as.character(HYBAS_ID)
   ) %>% 
@@ -308,7 +308,7 @@ google_nowcast_basin$hybas_af_lev04_v1c %>%
 
 Hypothetical example just for comparison where we only aggregate % breachs that occur on same day. This just for comparison sake. It doesn't make sense that we should only consider breach on same exact day within a basin.
 ```{r createTblDaysBreachGte50}
-pct_gauges_flagged_day <- google_nowcast_basin %>% 
+pct_gauges_flagged_day <- google_historical_basin %>% 
   map(\(dft){
     dft %>% 
       group_by(hybas_id = as.character(HYBAS_ID),
@@ -374,8 +374,8 @@ tbl_days_rp2_flags %>%
 
 
 ```{r createPlotPctBreached}
-tar_load(nowcast_rp2_breach_pct_basin_gauges)
-p_pct_breach_exceed <- nowcast_rp2_breach_pct_basin_gauges %>% 
+tar_load(ghistorical_rp2_breach_pct_basin_gauges)
+p_pct_breach_exceed <- ghistorical_rp2_breach_pct_basin_gauges %>% 
   map2(c("Basin Level 4","Basin Level 5"),\(dft,p_subtitle){
     dft %>% 
       # so if multiple breaches w/ in same basin occur on same day they
@@ -486,7 +486,7 @@ df_freq_breach_summary_basin %>%
 
 
 ```{r createAnim, map-animation2019,eval=F}
-hybas_sel <- google_nowcast_basin$hybas_af_lev04_v1c %>% 
+hybas_sel <- google_historical_basin$hybas_af_lev04_v1c %>% 
   clean_names() %>% 
   filter(
     hybas_id ==1040909890,
