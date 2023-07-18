@@ -19,6 +19,10 @@ tar_option_set(
 # tar_make_clustermq() configuration (okay to leave alone):
 options(clustermq.scheduler = "multicore")
 
+gs4_auth(
+  path = Sys.getenv("GFF_JSON")
+)
+
 input_dir <- file.path(
   Sys.getenv("GFH_DATA_DIR"),
   "inputs"
