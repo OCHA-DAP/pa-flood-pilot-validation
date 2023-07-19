@@ -47,20 +47,3 @@ read_shape_zip <- function(path,layer){
 }
 
 
-read_gauge_googlesheets <- function(url=Sys.getenv("GFH_GAUGE_URL")){
-  sns <- sheet_names(ss = url)
-  sn_filt <- sns[sns!="Sheet1"]
-  sn_filt %>% 
-    map(
-      \(sn){
-        read_sheet(ss=url,sheet=sn) %>% 
-          clean_names()
-      }
-    ) %>% 
-    set_names(nm = sn_filt)
-  
-}
-
-
-
-
