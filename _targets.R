@@ -139,6 +139,13 @@ list(
     name = gauge_google_wb,
     command = read_gauge_googlesheets(url = Sys.getenv("GFH_GAUGE_URL"))  
   ),
+  tar_target(
+    name = g_realtime_gauge,
+    command = gauge_google_wb %>% 
+      keep_at(at = ~str_detect(.x,"hybas_")) %>% 
+      bind_rows() %>% 
+      mutate(date= dmy(date))
+    ),
   ### Google historical-reanalysis (nowcast) ####
   # compile all historical data into one data.frame
   tar_target(
