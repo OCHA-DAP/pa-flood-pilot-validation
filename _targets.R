@@ -56,15 +56,6 @@ list(
     ),
     format = "file"
   ),
-  tar_target(
-    name = gauge_google_fp,
-    command = file.path(
-      input_dir,
-      "nga_google_gauges.xlsx"
-    ),
-    format = "file"
-  ),
-
   # Load Data ---------------------------------------------------------------
   ## Base Data ####
   # base data includes admin zones, rivers, basins,
