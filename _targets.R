@@ -134,14 +134,8 @@ list(
       filter(coverage == "Nigeria_launched")
   ),
   ### Google real-time nowcast/forecast ####
-
-  # once we have access to the googlesheet - we will change to `{googlesheets}` package for reading.
-  # tar_target(
-  #   name = gauge_google_wb,
-  #   command = read_all_tabs(gauge_google_fp,
-  #                           clean_names = T,
-  #                           skip = 0)
-  # ),
+  
+  # read in full wb from google.
   tar_target(
     name = gauge_google_wb_full,
     command = read_gauge_googlesheets(url = Sys.getenv("GFH_GAUGE_URL"))
@@ -235,6 +229,11 @@ list(
       )
   ),
   # might want to turn this into a function so that we can easily change the +/- days parameter
+  # Overview: 
+    # - find all distinct gauge+basin+date+discharge records where threshold (RP2) was exceeded
+    # - find filter to those basin + dates in full historical and scan +/- n (5) days in each basin
+    # - count the number of other gauges in the basin that crossed in that period (n)
+  
   tar_target(
     name = ghistorical_rp2_breach_pct_basin_gauges,
     command = google_historical_basin %>%
@@ -247,7 +246,7 @@ list(
           mutate(
             hybas_id = as.character(hybas_id)
           )
-
+        # find all distinct flagging events (when RP 2 was exceeded)
         distinct_flags <- dft_c %>%
           filter(rp_2_flag) %>%
           distinct(
