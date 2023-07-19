@@ -39,9 +39,7 @@ tar_load(basins_clipped)
 
 g_realtime_gauge <- gauge_google_wb %>% 
   keep_at(at = ~str_detect(.x,"hybas_")) %>% 
-  bind_rows() %>% 
-  mutate(date= dmy(date))
-
+  bind_rows() 
 
 g_realtime_latest <- g_realtime_gauge %>% 
   group_by(gauge_id) %>% 
