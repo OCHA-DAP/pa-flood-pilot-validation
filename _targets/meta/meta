@@ -1,12 +1,12 @@
 name|type|data|command|depend|seed|path|time|size|bytes|format|repository|iteration|parent|children|seconds|warnings|error
-.Random.seed|object|28e530910f801030|||||||||||||||
+.Random.seed|object|523be8dcf78dd05c|||||||||||||||
 basins_clipped|stem|8abfeece9cb77a07|82bc3d952d867bc0|138a7156d2a31d0b|1636979991||t19531.3301049761s|bc8304d21f68e3ea|919118|rds|local|vector|||4.134||
 classify_google_historical_data|function|cf38236ce6010a78|||||||||||||||
 classify_google_nowcast_data|function|136b6533deea7a59|||||||||||||||
 classify_google_nowcast_data2|function|136b6533deea7a59|||||||||||||||
 gauge_google_fp|stem|3c8d36f24065554c|e9e45c1c2c08c3bb|ca029d74dc06e2fe|-1937308158|/Users/zackarno/Library/CloudStorage/GoogleDrive-Zachary.arno@humdata.org/Shared drives/Predictive Analytics/Collaborations/GoogleFloodForecasting/data/inputs/nga_google_gauges.xlsx|t19531.5117451511s|952be65298c78be7|45376|file|local|vector|||0||
-gauge_google_sp|stem|40c74d98072b56f9|f356e057036f757a|9f805f9b386a4fa9|927278688||t19531.5119969933s|9a8a4f5539bd781a|1283|rds|local|vector|||0.011||
-gauge_google_wb|stem|543fb28a460e89c6|5b720e80ee78837e|c5b9f1278a914dc3|2007145002||t19531.5119967942s|bbca966cb3ab6859|7331|rds|local|vector|||0.367||
+gauge_google_sp|stem|40c74d98072b56f9|f356e057036f757a|49fb89d8b9e254f8|927278688||t19534.4113977295s|9a8a4f5539bd781a|1283|rds|local|vector|||0.01||
+gauge_google_wb|stem|3ab59ece197b82ae|f54f3a6d1c927d45|8102c2b750058974|2007145002||t19534.4113974716s|2823e06452531add|11903|rds|local|vector|||22.343||
 gauges_basin_google|stem|37c951ff52b4dba9|58c28aed5126267a|ac248e2d9f27b767|1696525980||t19528.4387289964s|3981d998931a5512|2019|rds|local|vector|||0.076||
 gfh_coverage|stem|496ca03c934cecd6|3a4db9b7b7eb8414|587c56888f4bd6ad|1267770128||t19531.3300563943s|e61c63190e1419af|119824|rds|local|vector|||0.056||
 gfh_dsn|object|3d079ce069bcbec1|||||||||||||||
@@ -14,7 +14,7 @@ gfh_now|stem|9dee5b86f08b6890|38a2971aa3b5251a|41c1efabf5aa367c|-560214675||t195
 ghistorical_rp2_breach_pct_basin_gauges|stem|ab4ad5d7a1c169a9|2b3f844b5cc8df4c|dfba13062b12027e|-997337914||t19534.3968518337s|a8a2a7b43af055b8|2902|rds|local|vector|||266.416||
 google_historical|stem|03913d9c37c954ec|9b5ba42b48bffd4e|1bf376a0cfdc7ca9|-606912854||t19534.3932794644s|0fec2e0138dc62bc|1956057|rds|local|vector|||0.509||
 google_historical_basin|stem|4a9a0911dd992a2e|99b57b634d6f2180|9147890bb14010c0|-1310850209||t19534.393306332s|a0ee932be00ed380|4124406|rds|local|vector|||0.271||
-google_historical_class|stem|a4f6c5d0e6d0940e|d768cee2f2df538b|957651060b53a6cd|827694615||t19534.4053802529s|76eeb353beda092f|1988892|rds|local|vector|||0.141||
+google_historical_class|stem|a4f6c5d0e6d0940e|d768cee2f2df538b|e36f3ae8640dd732|827694615||t19534.4114065051s|76eeb353beda092f|1988892|rds|local|vector|||0.204||
 google_nowcast_fp|object|828dd56bf64454aa|||||||||||||||
 hydrobasin_dsn|object|e460962d8e09c534|||||||||||||||
 input_dir|object|bacdab1a143da1c6|||||||||||||||
@@ -27,4 +27,5 @@ nga_pop_r_fp|stem|919ab9e51076b1b3|a37345353cab0f67|ca029d74dc06e2fe|613649790|/
 nga_riv|stem|839b68a4dd24281e|ebc2e86f07881c83|418602c382357fad|-1049911593||t19527.4970767835s|301b478f5c0d5a30|4334|rds|local|vector|||1.397||
 nig_riv_b15k|stem|3ee0535d53734597|370a3d308594e9a1|7ea601591d76c5df|-1957574207||t19527.4973605192s|8cdbfa59a045d809|20245|rds|local|vector|||0.038||
 read_all_tabs|function|afc5427464c31eb9|||||||||||||||
+read_gauge_googlesheets|function|6381ef1606dae35c|||||||||||||||
 read_shape_zip|function|227b975625054f31|||||||||||||||
