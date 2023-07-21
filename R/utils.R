@@ -62,5 +62,27 @@ read_gauge_googlesheets <- function(url=Sys.getenv("GFH_GAUGE_URL")){
 }
 
 
+#' drive_download_kml
+#' @description
+#' A work around wrapper for \link[googledrive]{drive_download} to allow downloading  kmls files (See \url{https://github.com/tidyverse/googledrive/issues/441})
+#' 
+#' @param id \code{character} id of drive resource
+#' @param path \code{character} path to download file
+#' @return kml file downloaded to path
 
+
+drive_download_kml <- function(id,path){
+  # get individual file drive so that we can enfore mimeType
+  doi <- drive_get(as_id(id))
+  
+  # make sure the original mimeType is the type we want to convert
+  assertthat::assert_that(drive_tmp$drive_resource[[1]]$mimeType=="application/vnd.google-earth.kml+xml",
+                          msg = "mimeType is not vnd.google-earth.kml+xml so you should use googledrive::drive_download()")
+  
+  # convert to text/xml
+  doi$drive_resource[[1]]$mimeType <- "text/xml"
+  
+  # download
+  drive_download(doi,path = path)
+}
 
