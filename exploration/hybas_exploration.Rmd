@@ -47,7 +47,7 @@ tar_load(nga_riv) # rivers
 
 ## Data
 
-**Forecast Data :** We currently have a data set containing **20** gauges that are being monitored by google. They will soon be adding more so that **~150** gauges will be included. This data monitors river discharge for the current day and 1-7 day lead times.
+**Forecast Data :** We currently have a data set containing **60** gauges that are being monitored by google. These are the final selection of gauges with highest prediction confidence. This data monitors river discharge for the current day and 1-7 day lead times.
 
 **Historical Data:** For the gauges present in the forecast data set we have historical reanalysis data back to 1981. It is not hindcast data, but rather simulated river discharge for each day.
 

@@ -8,5 +8,10 @@
 exploration/hybas_exploration_files/*
 *.gif
 *.html
+*.png
+*.pdf
+
+# ignore this pdf work until later
+pdf_design/*
 
 google_flood_pilot_key.json
