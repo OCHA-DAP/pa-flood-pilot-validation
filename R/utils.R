@@ -76,7 +76,7 @@ drive_download_kml <- function(id,path){
   doi <- drive_get(as_id(id))
   
   # make sure the original mimeType is the type we want to convert
-  assertthat::assert_that(drive_tmp$drive_resource[[1]]$mimeType=="application/vnd.google-earth.kml+xml",
+  assertthat::assert_that(doi$drive_resource[[1]]$mimeType=="application/vnd.google-earth.kml+xml",
                           msg = "mimeType is not vnd.google-earth.kml+xml so you should use googledrive::drive_download()")
   
   # convert to text/xml
