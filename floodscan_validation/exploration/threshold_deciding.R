@@ -260,7 +260,7 @@ gauge_validation <- google_gauge_activations %>%
       fs_gauge_activations,
       hybas_station = HYBAS_ID,
       time,
-      fs_above_threshold = above_threshold
+      fs_above_threshold
     ),
     by = c("hybas_station", "time")
   ) %>%
@@ -903,4 +903,181 @@ df_metrics_overall %>%
     x = "Threshold",
     y = "Return period",
     fill = "Metric"
+  )
+
+#################################################################
+#### CHECK FREQUENCY OF ACTIVATION BASED ON THESE THRESHOLDS ####
+#################################################################
+
+final_activations <- basin_pcts %>%
+  mutate(
+    activation_2y = `2y_rp` >= 1,
+    activation_5y = `2y_rp` >= 0.5,
+    activation_20y = `2y_rp` > 0.2,
+    basin_name = factor(
+      case_when(
+        basin_id == 1040760290 ~ "Upper Niger",
+        basin_id == 1040909890 ~ "Lower Niger",
+        basin_id == 1040022420 ~ "Niger Delta",
+        basin_id == 1040909900 ~ "Benue"
+      ),
+      levels = c("Upper Niger", "Lower Niger", "Benue", "Niger Delta")
+    )
+  ) %>%
+  pivot_longer(
+    starts_with("activation")
+  ) %>%
+  filter(
+    value
+  ) %>%
+  group_by(
+    basin_id, name
+  ) %>%
+  arrange(
+    time,
+    .by_group = TRUE
+  ) %>%
+  mutate(
+    day_group = c(0, cumsum(diff(time) != 1))
+  ) %>%
+  group_by(
+    basin_name,
+    name,
+    day_group
+  ) %>%
+  summarize(
+    start_time = min(time),
+    end_time = max(time),
+    start_year = lubridate::year(start_time),
+    end_year = lubridate::year(end_time),
+    .groups = "drop"
+  )
+
+final_activations %>%
+  group_by(
+    basin_name,
+    name,
+    start_year
+  ) %>%
+  summarize(
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    name = factor(name, levels = c("activation_2y", "activation_5y", "activation_20y"))
+  ) %>%
+  ggplot(
+    aes(
+      x = start_year,
+      y = fct_rev(basin_name),
+      fill = n
+    )
+  ) +
+  geom_tile(
+    color = "white"
+  ) +
+  facet_wrap(
+    ~ name,
+    ncol = 1,
+    labeller = as_labeller(\(x, y) {
+      lbls <- c(
+        "activation_2yr" = "2 year RP (>= 80%)",
+        "activation_5yr" = "5 year RP (>= 50%)",
+        "activation_20yr" = "20 year RP (>= 20%)"
+      )
+      lbls[y] 
+    }
+    )
+  ) +
+  labs(
+    y = "",
+    x = "",
+    title = "Activations per year in historical data",
+    fill = "# of activations"
+  )
+
+# look at gauge level activations to see how frequent across a decade we are
+# activating
+
+google_gauge_activations %>%
+  mutate(
+    year = lubridate::year(time),
+    decade = case_when(
+      year <= 1992 ~ "1983 - 1992",
+      year <= 2002 ~ "1993 - 2002",
+      year <= 2012 ~ "2003 - 2012",
+      year <= 2022 ~ "2013 - 2022"
+    )
+  ) %>%
+  filter(
+    between(year, 1983, 2022)
+  ) %>%
+  pivot_longer(
+    starts_with("google")
+  ) %>%
+  filter(
+    value
+  ) %>%
+  group_by(
+    gauge_id,
+    decade,
+    name
+  ) %>%
+  mutate(
+    day_group = c(0, cumsum(diff(time) != 1))
+  ) %>%
+  group_by(
+    day_group,
+    .add = TRUE
+  ) %>%
+  summarize(
+    start_time = min(time),
+    end_time = max(time),
+    .groups = "drop_last"
+  ) %>%
+  summarize(
+    num_activations = n(),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    values_from = num_activations,
+    values_fill = 0
+  ) %>%
+  ggplot(
+    aes(
+      x = google_activation_2y_rp,
+      y = google_activation_5y_rp
+    )
+  ) +
+  geom_hline(
+    yintercept = 2,
+    color = hdx_hex('tomato-hdx')
+  ) +
+  geom_vline(
+    xintercept = 5,
+    color = hdx_hex('tomato-hdx')
+  ) +
+  geom_point() +
+  facet_wrap(
+    ~ decade,
+    scales = "free",
+    nrow = 1
+  ) +
+  geom_text(
+    data = data.frame(decade = "1983 - 1992"),
+    x = 17,
+    y = 2.2,
+    label = "Expected # of activations"
+  ) +
+  geom_text(
+    data = data.frame(decade = "1983 - 1992"),
+    x = 4.3,
+    y = 4,
+    label = "Expected # of activations",
+    angle = 90
+  ) +
+  labs(
+    y = "# of times gauge reached the 5 year RP",
+    x = "# of times gauge reached the 2 year RP",
+    title = "Number of times each gauge reaches the 2 year and 5 year RP, by decade"
   )
