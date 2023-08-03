@@ -42,6 +42,7 @@ library(sf)
 library(janitor)
 gghdx()
 source("src/email/email_utils.R")
+additional_plots <- F
 ```
 
 ```{r, class.output = "banner"}
@@ -54,6 +55,7 @@ drive_download(banner_drib, path = banner_path <- tempfile(fileext = ".png"))
 if(!service_account_set){
 banner_path <- file.path(
     Sys.getenv("GFH_DATA_DIR"),
+    "gha_inputs",
     "centre_banner.png"
 ) 
 }
@@ -77,7 +79,8 @@ if(nrow(flags_long)){
         filter(rp_num==max(rp_num))
     
     flood_extent_description <- "Below we display the predicted flood extent over the next 7 days"
-    pop_affected_description <- "The approximate number of people affected is calculated at the state level based on the predicted flood extents shown above"
+    flood_extent_description <- "Below we see the approximate flood locations and estimated area (km2) flooded based on Google's flood model predictions (**note:** this is example placeholder data)"
+    pop_affected_description <- "The approximate number of people affected is calculated at the state level based on the predicted flood extents shown above (**note:** this is example placeholder data)"
 }
 num_gauges <-  nrow(gauge_df_list$metadata)
 num_basins <- length(unique(gauge_locations_sp$hybas_id))
@@ -89,7 +92,7 @@ num_basins <- length(unique(gauge_locations_sp$hybas_id))
 
 **`r alert_status`**
 
-The alerts status is determined based on forecast discharge values (m3/s) from **`r num_gauges`** gauges in **`r num_basins`** basins. If greater than 50 % of gauges within a single basin are predicted to reach a discharge of greater than a 1 in 2 year event the basin enters into warning phase. 
+The alerts status is determined based on forecast discharge values (m3/s) from **`r num_gauges`** gauges in **`r num_basins`** basins. If greater than 50 % of gauges within a single basin are predicted to reach a discharge of greater than a 1 in 2 year event the basin enters into an alert phase phase. 
 
 The map shows the gauge locations and the warning status by basin.
 
@@ -103,23 +106,33 @@ The map shows the gauge locations and the warning status by basin.
 # )
 
 m_basin_alerts
+
 ```
 
-Below we see predicted increase/decrease in discharge for the next 7 days. Line color indicates if a 2, 5, or 20 year threshold was breached at any gauge over the entire 7 days.
+```{r}
+line_plot_type <- c("pct_change","discharge","discharge_norm")[3]
+if(line_plot_type=="discharge"){
+  plot_desc_txt <- "Below we see predicted increase/decrease in discharge for the next 7 days. Line color indicates if a 2, 5, or 20 year threshold was breached at any gauge over the entire 7 days."
+}
+if(line_plot_type=="discharge_norm"){
+  plot_desc_txt <- "Below we see predicted discharge as percentage of the threshold (2 year RP value) for 7 days for each gauge. Each line represents one monitored gauge and colors indicate the basin in which it is located. The threshold is predicted to be crossed when the values is greater than 100%."
+}
+```
+`r plot_desc_txt`
 
 ```{r ac, results ="asis"}
 add_ggplot_custom(
   plot_object = p_lineplot,
   alt = "Alert plot",
-  height = 4.5,
-  width = 3.5,
-  html_width = 550
+  height = 6,
+  width = 6,
+  html_width = 650
 )
 ```
 
-`r if (alert_status=="Alert issued"){ flood_extent_description}`
+`r if (alert_status=="Alert issued" & additional_plots==T){ flood_extent_description}`
 ```{r, results="asis",fig.align='center'}
-if(alert_status=="Alert issued"){
+if(alert_status=="Alert issued" & additional_plots==T){
   m_flood_extent
 #   add_tmap_custom(
 #     plot_object = m_flood_extent,
@@ -131,9 +144,9 @@ if(alert_status=="Alert issued"){
 }
 ```
 
-`r if (alert_status=="Alert issued"){ pop_affected_description}`
+`r if (alert_status=="Alert issued"& additional_plots==T){ pop_affected_description}`
 ```{r, results="asis", fig.height=4,out.height=4}
-if(alert_status=="Alert issued"){
+if(alert_status=="Alert issued"& additional_plots==T){
   pop_affected_df %>% 
   gt() %>% 
   tab_header(title = "Population potentially affected at state level") %>% 
