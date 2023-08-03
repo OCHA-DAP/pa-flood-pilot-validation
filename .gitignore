@@ -10,6 +10,7 @@ exploration/hybas_exploration_files/*
 *.html
 *.png
 *.pdf
+*.svg
 
 # ignore this pdf work until later
 pdf_design/*

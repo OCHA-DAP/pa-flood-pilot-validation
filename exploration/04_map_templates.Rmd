@@ -1,0 +1,945 @@
+---
+title: "Flood Extent Maps"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: true
+        toc_depth: 4
+date: "2023-07-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = F,
+  results="asis",
+  warning = F,
+  message = F,
+  out.width="100%",
+  fig.width = 7,
+  fig.height = 5
+  )
+```
+
+## Intro
+
+In this document we will design the flood extent map aesthetics
+
+```{r floodMapLibs}
+library(tidyverse)
+library(sf)
+library(targets)
+library(googledrive)
+library(terra)
+library(grid) #viewport
+library(tmap)
+tar_source()
+
+drive_auth(
+  path = Sys.getenv("GFF_JSON")
+  )
+
+```
+
+
+
+```{r floodMapData, include=F}
+# load admin and river
+tar_load(nga_adm)
+tar_load(nga_riv)
+tar_load(roads_main)
+
+wmask_fp <- file.path(
+  Sys.getenv("AA_DATA_DIR"),
+  "public",
+  "raw",
+  "nga",
+  "jrc_water",
+  "nga_water_mask_jrc_2021.tif"
+)
+
+wmask <- rast(wmask_fp)
+# drive_ls()
+
+fext_gdrive_id <- list(
+  `f_20230510` = "1jcnbkPK34b4eTRGA9cyiD-MKcQqAmTQ7",
+  `f_20230509` = "1vN6HumxVGez_nwXUdylaWNc2XnntBCsL"
+)
+
+fext <- fext_gdrive_id %>% 
+  map(
+    \(.x){
+      drive_download_kml(.x,
+                   path = fp <- tempfile(fileext = ".kml")
+                   )
+      st_read(fp,layer = "Layer #0" ) %>% 
+        # fix invalid geoms
+        # st_make_valid doesnt work here.
+        st_buffer(dist = 0)
+    }
+  )
+```
+
+## Static
+
+Static maps are bit tricky since zoom/extent needs to be pre-determined. Here is the flood extent for `2023-05-10` with country-level map. 
+
+```{r}
+current.mode <- tmap_mode("plot")
+# map extent 1
+m_country <- fext %>% 
+  map(
+    \(.x){
+      tm_shape(nga_adm$adm0)+
+    tm_polygons(col = "white",border.col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(nga_riv)+
+    tm_lines(col = "lightblue",lwd=3)+
+    tm_shape(.x)+
+    tm_polygons(col = "darkblue",
+                border.col = "darkblue",
+                alpha = 0.75)
+    }
+  )
+
+m_country$f_20230510
+```
+
+and `2023-05-09`. Scale/zoom issues are apparent. Probably makes sense to sort these issue before finalizing all aesthetics.
+
+```{r}
+m_country$f_20230509
+```
+
+
+We can deal with the zoom/scale issues by predetermining an extent to map.
+
+## Setting Extents
+
+Some ideas on how to set extent:
+
+- flood bounding box + **n** km buffer
+- intersecting LGA bounding box
+
+```{r mapAesthetics}
+# for zoom in maps probably appropriate to show risk levels:
+flood_risk_palette <- c(
+  low_risk="aquamarine",
+  medium_risk="lightblue",
+  high_risk = "darkblue"
+                )
+```
+
+### LGA bounding boxs
+
+zoom level looks decent for `2022-05-10`, but a little far zoomed out for `2022-05-09`. We can see that if we zoom in far enough it is nice that we can visualize the diferent flood risk classifications.
+
+
+```{r}
+# going to use this function to set dims for viewport
+# https://github.com/geocompx/geocompr/issues/532
+norm_dim <- function(obj) {
+    bbox <- st_bbox(obj)
+    
+    width <- bbox[["xmax"]] - bbox[["xmin"]]
+    height <- bbox[["ymax"]] - bbox[["ymin"]]
+    
+    w <- width/max(width, height)
+    h <- height/max(width, height)
+    
+    c("w" = w, "h" = h)
+}
+
+# we use intersecting LGAs bbox for the extent of main map
+lga_bbox <- map(fext,\(.x){
+  bbox_df <- nga_adm$adm2 %>% 
+    st_join(.x) %>% 
+    filter(!is.na(Description)) %>% 
+    st_bbox() 
+})
+
+# create viewport for main maps
+main_vps <- lga_bbox %>% 
+  map(
+    \(map_extent){
+      main_w <- norm_dim(map_extent)[["w"]]
+      # print(main_w)
+      main_h <- norm_dim(map_extent)[["h"]]
+      # print(main_h)
+      viewport(x = 0.5,
+               y = 0.5,
+               width = unit(main_w, "snpc"),
+               height = unit(main_h, "snpc"),
+               name = "main")
+    }
+  )
+
+# create viewport for inset maps
+ins_w <- norm_dim(nga_adm$adm0)[["w"]]
+ins_h <- norm_dim(nga_adm$adm0)[["h"]]
+
+# using "cm" ratio to ensure inset map offsets the main map border by 0.5 cm
+inset_vp <- viewport(
+  # x = unit(1, "npc") - unit(0.1, "cm"), 
+  x = 0.985, 
+  # y = unit(0.95, "cm"),
+  y = 0.985,
+  width = unit(ins_w, "snpc") * 0.25, 
+  height = unit(ins_h, "snpc") * 0.25,
+  just = c("right", "top"), name = "ins")
+
+wmask[wmask<2]<-NA
+
+
+m_main <- map2(lga_bbox,
+               fext,
+     \(m_bbox,flood_extent){
+       flood_extent <- flood_extent %>% 
+         mutate(
+           classification = fct_relevel(Name,c("low_risk","medium_risk","high_risk"))
+         )  
+       r_crop <-  terra::crop(x = wmask,m_bbox)
+       tm_shape(nga_adm$adm0,bbox = m_bbox)+
+         tm_polygons(col = "white",border.col = "black")+
+         tm_shape(r_crop)+
+         tm_raster(style = "cat")+
+         tm_shape(nga_adm$adm1)+
+         tm_borders(col="darkgrey",lwd = 2,alpha=0.7)+
+         tm_shape(nga_adm$adm2)+
+         tm_borders(col="lightgrey",alpha = 0.3)+
+         tm_text(text = "ADM2_EN",col = "grey")+
+         tm_shape(nga_adm$adm0)+
+         tm_borders(col="black")+
+         tm_shape(nga_riv)+
+         tm_lines(col = "lightblue",lwd=3)+
+         tm_shape(flood_extent)+
+         tm_polygons(col = "classification",
+                     palette = flood_risk_palette,
+                     border.col = NULL,
+                     alpha = 0.75)+
+          tm_scale_bar(position = c("right", "bottom")) +
+           tm_layout(
+             legend.outside=F, 
+             legend.text.size = 0.8,
+             legend.title.size=0.9,
+             legend.frame=FALSE, 
+             legend.position=c(0.015, 0.015),
+             legend.just = c("left", "bottom"), 
+             legend.width=-0.15,
+             legend.height=-0.2, 
+             outer.margins = c(0,0,0,0),
+             inner.margins = c(0,0,0,0)
+           )
+       
+     })
+
+m_main$f_20230510
+```
+
+```{r}
+m_main$f_20230509
+```
+
+```{r mapMainSimp}
+m_main_simp <- map2(lga_bbox,
+               fext,
+     \(m_bbox,flood_extent){
+       flood_extent <- flood_extent %>% 
+         mutate(
+           classification = fct_relevel(Name,c("low_risk","medium_risk","high_risk"))
+         )  
+       r_crop <-  terra::crop(x = wmask,m_bbox)
+       r_crop[r_crop%in%c(2,3)] <- 1
+       
+       tm_shape(nga_adm$adm0,bbox = m_bbox)+
+         tm_polygons(col = "white",border.col = "black")+
+    
+         tm_shape(nga_adm$adm1)+
+         tm_borders(col="darkgrey",lwd = 2,alpha=0.7)+
+         tm_shape(nga_adm$adm2)+
+         tm_borders(col="lightgrey",alpha = 0.3)+
+         tm_text(text = "ADM2_EN",
+                 col = "black",
+                 shadow=T,
+                 auto.placement = T)+
+         # tm_text(text = "ADM2_EN",
+         #         col = "white",
+         #         size = 0.5,
+         #         # shadow=T,
+         #         auto.placement = T)+
+         tm_shape(nga_adm$adm0)+
+         tm_borders(col="black")+
+         tm_shape(nga_riv)+
+         tm_lines(col = "lightblue",lwd=3)+
+         tm_shape(flood_extent)+
+         tm_polygons(col = "darkblue",
+                     border.col = NULL,
+                     alpha = 0.75)+
+          tm_shape(r_crop)+
+         tm_raster(style = "cat",
+                   palette=c("aquamarine"),alpha = 0.7,
+                   legend.show=F)+
+         tm_add_legend(
+           col = c("aquamarine","darkblue"),
+           labels = c("Water Mask","Flood Water"),
+           size = 100
+           )+
+         tm_scale_bar(position = c("right", "bottom")) 
+           # tm_layout(
+           #   legend.outside=F, 
+           #   legend.text.size = 0.8,
+           #   legend.title.size=0.9,
+           #   legend.frame=FALSE, 
+           #   legend.position=NULL,#c(0.015, 0.015),
+           #   legend.just = c("left", "bottom"), 
+           #   legend.width=-0.15,
+           #   legend.height=-0.2, 
+           #   outer.margins = c(0,0,0,0),
+           #   inner.margins = c(0,0,0,0)
+           # )
+       
+     })
+m_main_simp$f_20230510
+```
+
+```{r}
+m_main_simp$f_20230510
+```
+
+
+```{r}
+# make inset maps
+m_lga_inset <- lga_bbox %>%
+  map(
+    \(fl){
+      fl <- fl %>% 
+        st_as_sfc()
+      tm_shape(nga_adm$adm0)+
+        tm_polygons(col = "white",border.col = "black")+
+        tm_shape(nga_adm$adm1)+
+        tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+        # tm_shape(nga_adm$adm2)+
+        # tm_borders(col="lightgrey",alpha = 0.3)+
+        tm_shape(nga_adm$adm0)+
+        tm_borders(col="black")+
+        tm_shape(nga_riv)+
+        tm_lines(col = "lightblue",lwd=3)+
+        # tm_shape(roads_main)+
+        # tm_lines(col="yellow")+
+        tm_shape(fl)+
+        tm_borders(col = "red")+
+        tm_layout(
+          inner.margins = c(0.04,0.04,0.04,0.04), 
+          outer.margins=c(0,0,0,0)
+          )
+    } 
+  )
+
+
+```
+## With Insets
+```{r}
+
+# inset_vp <- viewport(
+#   # x = unit(1, "npc") - unit(0.1, "cm"), 
+#   x = 0.985, 
+#   # y = unit(0.95, "cm"),
+#   y = 0.985,
+#   width = unit(ins_w, "snpc") * 0.25, 
+#   height = unit(ins_h, "snpc") * 0.25,
+#   just = c("right", "top"), name = "ins")
+
+
+grid.newpage()
+# main_vps$f_20230510$height
+parent_vp <- viewport(width=unit(6,"inches"), 
+                      height=unit(6*0.676267425769257,"inches"))
+print(m_main$f_20230510,vp=parent_vp)
+# print(m_main$f_20230510,
+#       vp = main_vps$f_20230510)
+#> stars object downsampled to 877 by 1140 cells. See tm_shape manual (argument raster.downsample)
+
+# pushViewport(main_vps$f_20230510)
+pushViewport(parent_vp)
+print(m_lga_inset$f_20230510,
+      vp = inset_vp)
+
+```
+
+```{r}
+grid.newpage()
+print(m_main$f_20230509,
+      vp = main_vps$f_20230509)
+#> stars object downsampled to 877 by 1140 cells. See tm_shape manual (argument raster.downsample)
+
+pushViewport(main_vps$f_20230509)
+print(m_lga_inset$f_20230509,
+      vp = inset_vp)
+```
+
+## 6x4 (WxH)
+```{r}
+
+max_area_8pt_lga_labs <- 117012476811
+if(max_area_8pt_lga_labs){
+  
+}
+```
+
+
+## Interactive
+
+```{r}
+
+
+m_main_simp_inter <- map2(lga_bbox,
+               fext,
+     \(m_bbox,flood_extent){
+       flood_extent <- flood_extent %>% 
+         mutate(
+           classification = fct_relevel(Name,c("low_risk","medium_risk","high_risk"))
+         )  
+       r_crop <-  terra::crop(x = wmask,m_bbox)
+       # r_crop[r_crop%in%c(2,3)] <- 1
+       r_crop[r_crop%in%c(0,1)] <- NA
+       tm_basemap(leaflet::providers$OpenStreetMap) +
+         tm_shape(nga_adm$adm1)+
+         tm_borders(col="darkgrey",lwd = 2,alpha=0.7)+
+         tm_shape(nga_adm$adm2)+
+         tm_borders(col="lightgrey",alpha = 0.3)+
+         # tm_text(text = "ADM2_EN",
+         #         col = "black",
+         #         shadow=T,
+         #         auto.placement = T)+
+         
+         tm_shape(nga_adm$adm0)+
+         tm_borders(col="black")+
+         tm_shape(nga_riv)+
+         tm_lines(col = "lightblue",lwd=3)+
+         
+         tm_shape(flood_extent)+
+         tm_polygons(col = "darkblue",
+                     border.col = NULL,
+                     alpha = 0.3)+
+         tm_shape(r_crop)+
+         tm_raster(style = "cat",
+                   palette=c("aquamarine","green"),
+                   alpha = 1,
+                   legend.show=F)+
+         
+         tm_add_legend(
+           col = c("aquamarine","darkblue"),
+           labels = c("Water Mask","Flood Water"),
+           size = 100
+         )
+       
+       
+     })
+current.mode <- tmap_mode("view")
+m_main_simp_inter$f_20230510
+m_main_simp_inter$f_20230509
+```
+
+
+## Combine extents
+```{r insetMapFuncs}
+library(rnaturalearth)
+fext_big <- fext %>% 
+  bind_rows() %>% 
+  st_buffer(dist = 0) %>% 
+  summarise()
+
+
+# make admin base for inset
+inset_admin_base <- function(size_scaler=0.3){
+  region <- rnaturalearth::ne_countries(
+  country = c("Nigeria","Niger","Benin","Cameroon","Chad"),
+  scale=10
+  )
+region <- region %>% 
+  st_as_sf() %>% 
+  mutate(
+    aoi= ifelse(adm0_a3=="NGA","aoi","not_aoi")
+  )
+region_l <- split(region,region$aoi)
+  tm_shape(region,bbox = region_l$aoi)+
+  tm_polygons(col = "aoi",
+              palette=c("white","lightgrey"),
+              legend.show=F)+
+  # admin 2
+  tm_shape(nga_adm$adm2)+
+  tm_borders(col="lightgrey",lwd = 1*size_scaler,alpha=0.4)+
+    # admin 1
+  tm_shape(nga_adm$adm1)+
+  tm_borders(col="#565656",lwd = 2*size_scaler,alpha=0.7)+
+  
+  # nga boundary
+    tm_shape(region_l$aoi,legend.show=F)+
+    tm_borders(col = "#414141",lwd = 5*size_scaler,alpha=0.7)+
+    tm_shape(region_l$aoi,legend.show=F)+
+    tm_borders(
+      col="lightgrey",
+      lty = 3, # linetype long dash
+      lwd=2*size_scaler)+
+    # country (not nga labels)
+    tm_shape(region_l$not_aoi)+
+    tm_text(
+      "admin",
+    col = "white",
+    auto.placement = F,
+    remove.overlap = T)+
+  tm_layout(bg.color = "lightblue")
+}
+
+#' Title
+#'
+#' @param flood_extent 
+#' @param bbox \code{character} use flood extent ("flood" default) or impacted LGA ("impacted_lga) to define bbox
+#' @param tmap_mode 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+#' inset_map(
+#'   flood_extent = fext_big,
+#'   bbox = "flood",
+#'   tmap_mode = "plot"
+#'  )
+
+inset_map <-  function(flood_extent,
+                       bbox,
+                       tmap_mode, size_scaler=0.3){
+  current.mode <- tmap_mode(tmap_mode)
+  if(bbox=="flood"){
+      ext_bbox <- st_bbox(flood_extent) %>% 
+        st_as_sfc()
+  }
+  if(bbox=="impacted_lga"){
+  # ext_bbox <- nga_adm$adm2 %>% 
+  #   st_join(flood_extent) %>% 
+  #   filter(!is.na(Description)) %>% 
+  #   st_bbox() 
+  ext_bbox <- st_join(
+    nga_adm$adm2 ,
+    flood_extent %>% 
+      mutate(
+        fext_id =row_number()
+      )
+    ) %>% 
+    filter(!is.na(fext_id)) %>% 
+    st_bbox() %>% 
+    st_as_sfc()
+  }
+  
+  admin_base <- inset_admin_base()
+    admin_base +
+        tm_shape(nga_riv)+
+        tm_lines(col = "lightblue",lwd=3*size_scaler)+
+        tm_shape(ext_bbox)+
+        tm_polygons(
+          border.col = "red",
+          col="red",
+          alpha = 0.2)+
+        tm_layout(
+          # inner.margins = c(0.04,0.04,0.04,0.04), 
+          outer.margins=c(0,0,0,0),legend.show = F
+          )
+}
+#
+```
+
+
+```{r}
+
+main_flood_map <-  function(
+    flood_extent=fext_big,
+    bbox= "flood_extent"
+    ){
+  ret <- list()
+  flood_extent <-  st_make_valid(flood_extent)
+  r_crop <-  terra::crop(x = wmask,flood_extent)
+  r_crop[r_crop%in%c(3)] <- 1
+  r_crop[r_crop!=3]<-NA
+  if(bbox == "flood_extent"){
+    ext_bbox <- st_bbox(flood_extent) %>% 
+      st_as_sfc()
+  }
+   if(bbox=="impacted_lga"){
+  ext_bbox <- st_join(
+    nga_adm$adm2 ,
+    flood_extent %>% 
+      mutate(
+        fext_id =row_number()
+      )
+    ) %>% 
+    filter(!is.na(fext_id)) %>% 
+    st_bbox() %>% 
+    st_as_sfc()
+  }
+  
+  ret$bbox <- ext_bbox
+  ret$map <- tm_shape(nga_adm$adm0,bbox = ext_bbox)+
+    tm_polygons(col = "white",border.col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 2,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    # tm_text(text = "ADM2_EN",
+    #         col = "black",
+    #         shadow=T,
+    #         auto.placement = T)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(nga_riv)+
+    tm_lines(col = "lightblue",lwd=3)+
+    tm_shape(flood_extent)+
+    tm_polygons(col = "darkblue",
+                border.col = NULL,
+                alpha = 0.75)+
+    tm_shape(r_crop)+
+    tm_raster(style = "cat",
+              # palette=c("aquamarine"),
+              alpha = 0.7,
+              legend.show=F)+
+    tm_add_legend(
+      col = c("aquamarine","darkblue"),
+      labels = c("Water Mask","Flood Water"),
+      size = 100
+    )+
+    tm_scale_bar(position = c("right", "bottom"))+
+    tmap_options(check.and.fix = TRUE)+
+    tm_layout(
+      outer.margins=c(0,0,0,0),
+      inner.margins = c(0,0,0,0)
+    )
+  return(ret)
+}
+
+main_flood_map(flood_extent = fext_big,bbox = "impacted_lga")   
+```
+
+
+
+What if we get flooded extents by basin
+```{r}
+tar_load(basins_clipped)
+tar_load(gauge_google_sp)
+tar_load(gauges_basin_google)
+
+# let's get the basins of interest
+basin4_ids_keep <- gauges_basin_google$hybas_af_lev04_v1c %>% 
+  st_drop_geometry() %>% 
+  count(HYBAS_ID,sort = T) %>% 
+  filter(n>=6) %>% # less than 6 we toss 
+  pull(HYBAS_ID)
+
+basin4 <- basins_clipped$hybas_af_lev04_v1c %>% 
+  filter(HYBAS_ID%in% basin4_ids_keep) %>% 
+  mutate(
+    basin_name = case_when(
+      HYBAS_ID == 1040909900 ~ "Benue",
+      HYBAS_ID == 1040909890 ~ "Niger",
+      HYBAS_ID == 1040022420 ~ "Delta",
+      HYBAS_ID == 1040760290 ~ "Upper Niger",
+      .default= NA
+        )
+  )
+
+tmap_mode("view")
+tm_shape(basin4, label="basin_name")+
+  tm_polygons(col = "basin_name",label="basin_name")+
+  tm_text(text  = "basin_name")+
+  tm_shape(gauge_google_sp)+
+  tm_dots()
+
+
+# can I split poly by basin
+fext_by_basin <- fext_big %>% 
+  st_make_valid() %>% 
+  st_cast("POLYGON") %>% 
+  st_join(
+    basin4
+  ) %>% 
+  group_by(basin_name) %>% 
+  summarise()
+
+inset_map(flood_extent = fext_by_basin[1,],
+          bbox= "impacted_lga",
+          tmap_mode="plot")
+
+main_flood_map(
+  flood_extent =fext_by_basin[1,],
+  
+  )   
+```
+
+# TRICK
+
+get the right bbox from inside the function,
+
+```{r}
+m_ins_test <- inset_map(
+  flood_extent = fext_by_basin[2,],
+          bbox= "impacted_lga",size_scaler = 0.3,
+          tmap_mode="plot")
+
+m_main_test <- main_flood_map(
+  flood_extent =fext_by_basin[2,],bbox = "impacted_lga"
+  )
+# create viewport for inset maps
+ins_w <- norm_dim(nga_adm$adm0)[["w"]]
+ins_h <- norm_dim(nga_adm$adm0)[["h"]]
+
+
+inset_vp <- viewport(
+  # x = unit(1, "npc") - unit(0.1, "cm"),
+  x = unit(0.99,"npc"),
+  # y = unit(0.95, "cm"),
+  y = unit(0.99,"npc"),
+  # x = unit(6,"inches"),
+  # y = unit(5.381019 ,"inches"),
+  # layout.pos.row = 1,
+  # layout.pos.col = 1,
+  width = unit(ins_w, "snpc") * 0.4, 
+  height = unit(ins_h, "snpc") * 0.4,
+  # parent=parent_vp,
+  just = c("right", "top"), name = "ins"
+  )
+
+main_dim<- norm_dim(obj = m_main_test$bbox)*6
+tmap_save(tm = m_main_test$map,
+          width = main_dim["w"],
+          height= main_dim["h"],
+          units = "in",
+          insets_tm = m_ins_test,
+          insets_vp = inset_vp,
+          filename = "m_test.png",
+          asp = NA
+          )
+```
+
+## Map Flood Centroids by Basin
+What about centroids for flooded areas byb asin
+```{r}
+fext_centroid_basin <- fext_by_basin %>% 
+  mutate(
+    `Area flooded` = as.numeric(units::set_units(st_area(.),km^2))
+  ) %>% 
+  st_centroid() 
+
+tmap_mode("plot")
+#potentially only show bubble sizes on map
+ck <- inset_admin_base()+
+  tm_shape(nga_riv)+
+  tm_lines(col = "lightblue",lwd=3)+
+  tm_shape(fext_centroid_basin)+
+  tm_bubbles(
+    size = "Area flooded",
+    col = rgb(238,88,89,max=255),
+    scale = 2,
+    title.size= "Area Flooded\n(km2)",
+     legend.size.is.portrait=TRUE,
+    # legend.max.symbol.size = 4
+    )+
+  tm_layout(
+    
+    legend.frame = T,
+    legend.bg.color = "white",
+    legend.bg.alpha = 0.5,
+    legend.width = 1,
+    panel.label.size = 1,
+    panel.label.height = 1  
+    )
+tmap_save(ck,width = 6,heigh=4.5, filename = "test.png")
+tm_fill(title = "shim sham")
+```
+
+```{r}
+grid.newpage()
+# main_vps$f_20230510$height
+parent_vp <- viewport(width=unit(6,"inches"), 
+                      height=unit(4.5,"inches"))
+print(m_main_test,vp=parent_vp)
+# print(m_main$f_20230510,
+#       vp = main_vps$f_20230510)
+#> stars object downsampled to 877 by 1140 cells. See tm_shape manual (argument raster.downsample)
+
+# pushViewport(main_vps$f_20230510)
+pushViewport(parent_vp)
+print(m_ins_test,
+      vp = inset_vp)
+
+norm_dim(obj = fext_by_basin[2,])
+
+norm_dim(obj = m_main_test$bbox)
+
+
+  dev.new()
+grid.newpage()
+# dev.off()
+# Set up the parent viewport
+pushViewport(viewport())
+
+# Draw the main map within the parent viewport
+print(m_main_test, vp =parent_vp)
+
+# Create a child viewport for the inset map
+pushViewport(inset_vp)
+
+# Draw the inset map within the child viewport
+print(m_ins_test,vp = inset_vp)
+
+# Pop the child viewport
+popViewport()
+
+# Pop the parent viewport
+popViewport()
+
+# Save the map to a file
+tmap_save("map_with_inset.png", width = 8, height = 8)
+```
+
+## Pop Impact LGA
+
+```{r eval=F}
+library(exactextractr)
+tar_load(nga_pop_r_fp)
+r_pop <- rast(nga_pop_r_fp)
+fext$f_20230510 
+
+ck<- st_intersects(fext$f_20230510,y = nga_adm$adm2,sparse = F)
+
+temp_fext_summarised <- fext$f_20230510 %>% 
+    summarise() %>% 
+    st_make_valid()
+ret <- list()
+for(i in 1:nrow(nga_adm$adm2)){
+  print(i)
+  temp_adm2 <- nga_adm$adm2 %>% 
+    slice(i)
+  temp_fext <- temp_fext_summarised[temp_adm2,]
+  temp_fext
+  temp_fext <- temp_fext %>% 
+    mutate(
+      adm2= temp_adm2$ADM2_EN
+    )
+  ret[[i]] <- temp_fext
+}
+st_geometry(fext_clip)
+fext_clip <- bind_rows(ret)
+fext_adm2 <- fext_clip %>% 
+  group_by(adm2) %>% 
+  summarise(
+  )
+plot(fext_clip %>% 
+       filter(adm2=="Edati"))
+plot(nga_adm$adm2,add=T)
+
+fext_adm2 %>% 
+  
+  plot()
+exact_extract(
+            x = r_pop,
+            y = fext_adm2,
+            append_cols = "adm2",
+            fun = c("sum"),
+            force_df = T,
+            full_colnames = T
+        ) %>%
+            pivot_longer(-matches("adm2")) %>%
+            separate(name, into = c("stat", "date"), sep = "\\.") %>%
+            pivot_wider(names_from = "stat", values_from = "value")
+        
+```
+
+
+
+We want to zoom in on flood extents. Therefore we need a programmitc way to do this.
+
+bounding box (bbox) is the first tool that comes to mind. Below we see the map zoomed to the bbox/extent of the flood. This looks to zoomed in - unless we want to look at damaged infrastructure (google building footprint) in which case we might buffer it a bit.
+
+```{r,eval=F}
+fex1_bbox <- st_bbox(fex1_buff) %>% 
+  st_as_sfc()
+
+# for zoom in maps probably appropriate to show risk levels:
+flood_risk_palette <- c(
+  low_risk="aquamarine",
+  medium_risk="lightblue",
+  high_risk = "darkblue"
+                )
+
+
+# map extent 1
+current.mode <- tmap_mode("plot")
+tm_shape(nga_adm$adm0,bbox = fex1_bbox)+
+    tm_polygons(col = "white",border.col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(fex1_buff)+
+    tm_polygons(col = "Name",
+                palette = flood_risk_palette,
+                border.col = NULL,
+                alpha = 0.75)+
+  tm_shape(nga_riv)+
+    tm_lines(col = "cyan",lwd=5)+
+  tm_scale_bar()
+```
+
+
+eventually we may want more contextual information on the map - so here is a an OSM background just as a taster. Problem is you can only do OSM tiles with this method with interactive/slippy maps.
+```{r,eval=F}
+current.mode <- tmap_mode("view")
+tm_basemap(leaflet::providers$OpenStreetMap) +
+tm_shape(nga_adm$adm0,bbox = fex1_bbox)+
+    tm_borders(col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(fex1_buff)+
+    tm_polygons(col = "Name",
+                palette = flood_risk_palette,
+                border.col = NULL,
+                alpha = 0.75)+
+  tm_shape(nga_riv)+
+    tm_lines(col = "cyan",lwd=5)
+```
+
+Anyways let's looks at the second flood extent. **Note** the extent is much smaller than the first flood extent. This type of scale issue is going to be an interesting problem to deal with programmatically.
+
+```{r,eval=FALSE}
+current.mode <- tmap_mode("plot")
+fex2_bbox <- fex2_buff %>% 
+  st_as_sfc()
+
+tm_shape(nga_adm$adm0,bbox = fex2_bbox)+
+    tm_polygons(col = "white",border.col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(fex2_buff)+
+    tm_polygons(col = "Name",
+                palette = flood_risk_palette,
+                border.col = NULL,
+                alpha = 0.75)+
+  tm_shape(nga_riv)+
+    tm_lines(col = "cyan",lwd=5)+
+  tm_scale_bar()
+
+```
+

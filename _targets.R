@@ -69,6 +69,13 @@ list(
     )) %>%
       set_names(c("adm0", "adm1", "adm2"))
   ),
+  # west and central africa admin 0 (need for mapping)
+  tar_target(
+    name= wca_adm0,
+    command =   pull_dataset("b20cd345-93fb-43bd-9c6e-7bc7d87b63eb") %>%
+      get_resource(1) %>%
+      read_resource()
+  ),
   ### River MultiLines ####
   tar_target(
     name = nga_riv,

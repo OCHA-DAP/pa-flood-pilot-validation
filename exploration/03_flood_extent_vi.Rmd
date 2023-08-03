@@ -1,0 +1,439 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-07-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Intro
+
+In this document we will design the flood extent map aesthetics
+
+```{r floodMapLibs}
+library(tidyverse)
+library(sf)
+library(targets)
+library(googledrive)
+tar_source()
+drive_auth(path = Sys.getenv("GFF_JSON"))
+```
+
+
+
+```{r floodMapData}
+# load admin and river
+tar_load(nga_adm)
+tar_load(nga_riv)
+
+# we were given 2 kmls for viz drafting
+drive_download_kml("1jcnbkPK34b4eTRGA9cyiD-MKcQqAmTQ7",
+                   path = tmp_ext1_fp <- tempfile(fileext = ".kml")
+                   )
+drive_download_kml("1jcnbkPK34b4eTRGA9cyiD-MKcQqAmTQ7",
+                   path = tmp_ext2_fp <- tempfile(fileext = ".kml")
+                   )
+
+
+fex1 <- st_read(dsn=tmp_ext1_fp,layer = "Layer #0" )
+fex2 <- st_read(dsn=tmp_ext2_fp,layer = "Layer #0" )
+
+# ext 1 polygons are not closed -- i've tried `st_make_valid()` but laggy and doesn't work
+# therefore, this seems like the simplest solution... this works w/ both
+
+fex1_buff<- st_buffer(fex1,dist = 0)
+fex2_buff<- st_buffer(fex2,dist = 0)
+fex1_buff %>% 
+  # filter(Name=="medium_risk") %>% 
+  st_cast(to = "POLYGON") %>% 
+  mutate(
+    area = st_area(.),
+    side_length = sqrt(area)
+  ) %>% 
+  filter(area==min(area))
+```
+
+
+```{r}
+# map extent 1
+tm_shape(nga_adm$adm0)+
+    tm_polygons(col = "white",border.col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(nga_riv)+
+    tm_lines(col = "lightblue",lwd=3)+
+    tm_shape(fex1_buff)+
+    tm_polygons(col = "darkblue",
+                border.col = "darkblue",
+                alpha = 0.75)
+
+# map fexent 2
+tm_shape(nga_adm$adm0)+
+    tm_polygons(col = "white",border.col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(nga_riv)+
+    tm_lines(col = "lightblue",lwd=3)+
+    tm_shape(fex2_buff)+
+    tm_polygons(col = "darkblue",
+                border.col = "darkblue",
+                alpha = 0.75)
+  
+```
+
+We want to zoom in on flood extents. Therefore we need a programmitc way to do this.
+
+bounding box (bbox) is the first tool that comes to mind. Below we see the map zoomed to the bbox/extent of the flood. This looks to zoomed in - unless we want to look at damaged infrastructure (google building footprint) in which case we might buffer it a bit.
+
+```{r}
+fex1_bbox <- st_bbox(fex1_buff) %>% 
+  st_as_sfc()
+
+# for zoom in maps probably appropriate to show risk levels:
+flood_risk_palette <- c(
+  low_risk="aquamarine",
+  medium_risk="lightblue",
+  high_risk = "darkblue"
+                )
+
+
+# map extent 1
+current.mode <- tmap_mode("plot")
+tm_shape(nga_adm$adm0,bbox = fex1_bbox)+
+    tm_polygons(col = "white",border.col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(fex1_buff)+
+    tm_polygons(col = "Name",
+                palette = flood_risk_palette,
+                border.col = NULL,
+                alpha = 0.75)+
+  tm_shape(nga_riv)+
+    tm_lines(col = "cyan",lwd=5)+
+  tm_scale_bar()
+```
+
+
+eventually we may want more contextual information on the map - so here is a an OSM background just as a taster. Problem is you can only do OSM tiles with this method with interactive/slippy maps.
+```{r}
+current.mode <- tmap_mode("view")
+tm_basemap(leaflet::providers$OpenStreetMap) +
+tm_shape(nga_adm$adm0,bbox = fex1_bbox)+
+    tm_borders(col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(fex1_buff)+
+    tm_polygons(col = "Name",
+                palette = flood_risk_palette,
+                border.col = NULL,
+                alpha = 0.75)+
+  tm_shape(nga_riv)+
+    tm_lines(col = "cyan",lwd=5)
+```
+
+Anyways let's looks at the second flood extent. **Note** the extent is much smaller than the first flood extent. This type of scale issue is going to be an interesting problem to deal with programmatically.
+
+```{r}
+current.mode <- tmap_mode("plot")
+fex2_bbox <- fex2_buff %>% 
+  st_as_sfc()
+
+tm_shape(nga_adm$adm0,bbox = fex2_bbox)+
+    tm_polygons(col = "white",border.col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(fex2_buff)+
+    tm_polygons(col = "Name",
+                palette = flood_risk_palette,
+                border.col = NULL,
+                alpha = 0.75)+
+  tm_shape(nga_riv)+
+    tm_lines(col = "cyan",lwd=5)+
+  tm_scale_bar()
+
+```
+
+Let's visualize the problem more by pretending the 2 flood extent files are just 1 flood extent file for 1 day:
+
+- join the 2 flood extents to make a dummy extent pretending it is 1 flood extent with polygons spread out in different places over the country
+
+```{r}
+fex_combined <- bind_rows(fex1_buff,fex2_buff)
+```
+
+- The problem with the combined dummy file above is that it each classifycation is given a multi-polygon per file. Therefore, let's union them based on the classification so we just get back 3 multi-polygons which is how I believe we will recieve the files.
+```{r}
+fex_union <- fex_combined %>% 
+  group_by(Name) %>% 
+  summarise()
+```
+
+Okay here is the bbox of the unioned flood extent file. Not too pretty- it's an odd rectangle and the eastern polygon is hard to see bc it is so much smaller.
+```{r}
+fex_union_bbox <- st_bbox(fex_union) %>% 
+  st_as_sfc()
+
+tm_shape(nga_adm$adm0,bbox = fex_union_bbox)+
+    tm_polygons(col = "white",border.col = "black")+
+    tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(fex_union)+
+    tm_polygons(col = "darkblue",
+                border.col = "black",
+                alpha = 0.75)+
+  tm_shape(nga_riv)+
+    tm_lines(col = "cyan",lwd=1)
+```
+
+Basically we need to devise a method of splitting fexents based on a.) location, b.) size... if flood extent is below a certain size and far from the rest maybe it's not worth mapping separately.
+
+These type of operations make alot more sense on raster data than vector data so let's convert to raster. It is clear that these data originate from rasters, so ideally google can just give us the raster data going forward (for now let's convert)
+
+```{r}
+# this does work
+library(terra)
+library(stars)
+
+fex_union_utm <- fex_union %>% 
+  st_transform(crs= 32632)
+
+bbox_utm <- st_bbox(fex_union_utm)
+stars_fex_union <- st_rasterize(fex_union_utm)
+r_template <- raster(
+  resolution=10,
+  xmn= bbox_utm["xmin"]+5,
+  xmx = bbox_utm["xmax"]-5,
+  ymn= bbox_utm["ymin"]+5,
+  ymx = bbox_utm["ymax"]-5,
+  crs=fex_union_utm
+)
+  
+stars_ffex_union <- st_rasterize(fex_union_utm,template = stars::st_as_stars(r_template))
+r_fextent <- rast(stars_fext_union)
+
+```
+ck on map
+
+```{r}
+current.mode <- tmap_mode("view")
+tm_shape(
+  fex1_buff %>% 
+    st_transform(crs = 32632)
+)+
+  tm_polygons()+
+  tm_shape(
+    r_fexent
+    )+
+  tm_raster()
+
+tm_shape(
+  nga_adm$adm0,
+  bbox = fex1_bbox
+)+
+  tm_polygons(col = "white",border.col = "black")+
+  tm_shape(nga_adm$adm1)+
+    tm_borders(col="darkgrey",lwd = 1,alpha=0.7)+
+    tm_shape(nga_adm$adm2)+
+    tm_borders(col="lightgrey",alpha = 0.3)+
+    tm_shape(nga_adm$adm0)+
+    tm_borders(col="black")+
+    tm_shape(fex_union)+
+    tm_polygons(col = "darkblue",
+                border.col = "black",
+                alpha = 0.75)+
+  tm_shape(r_ex)
+  tm_shape(nga_riv)+
+    tm_lines(col = "cyan",lwd=1)
+```
+
+
+```{r}
+library(terra)
+library(stars)
+# makes sense to do this stuff in utm i think
+fex_union_utm <- fex_union %>% 
+  st_transform(crs= 32632)
+
+bbox_utm <- st_bbox(fex_union_utm)
+stars_fex_union <- st_rasterize(fex_union_utm)
+r_auto_res <- rast(stars_fex_union)
+?terra::resample(x =r_auto_res, )
+
+cells_x <- ((bbox_utm["xmax"]+10)-bbox_utm["xmin"])/10
+cells_y <- ((bbox_utm["ymax"]+10)-bbox_utm["ymin"])/10
+cells_x <- round(cells_x,0)
+cells_y <- round(cells_y,0)
+r_template <- raster(
+  # xmn=bbox_utm["xmin"],
+  # ymn=bbox_utm["ymin"],
+  nrows=cells_y, 
+  ncol=cells_x,
+  resolution=10,
+  xmn= bbox_utm["xmin"],
+  xmx = bbox_utm["xmax"],
+  ymn= bbox_utm["ymin"],
+  ymx = bbox_utm["ymax"],
+  crs= fex_union_utm
+  )
+
+
+stars_fex_union <- st_rasterize(fex_union_utm,template = stars::st_as_stars(r_template))
+raster(fex_union_utm,template=r_template)
+
+
+
+cells_wide <- ceiling((bbox_utm["xmax"]-bbox_utm["xmin"])/10)
+cells_high <- ceiling((bbox_utm["ymax"]-bbox_utm["ymin"])/10)
+```
+
+
+```{r}
+ck <- ?terra::rast(x = stars_fex_union)
+# let's make a grid
+
+v_grid <- st_make_grid(stars_fex_union,)
+tm_shape(v_grid)+
+  tm_borders()+
+  tm_shape(fex_union_utm)+
+  tm_polygons()
+
+st_make_grid()
+rast(fex_stars_utm)
+rast(fex_stars_utm,
+     resolution= 10)
+?rast()
+
+terra::rasterize()
+r_fex_utm <- projectRaster(from= r_fex,  crs = "+init=epsg:26332")
+
+```
+
+
+
+
+```{r}
+xmin <- ...
+ymin <- ...
+xmax <- ...
+ymax <- ...
+res <- ...
+projection <- ...
+library(raster)
+
+
+df_bbox<- st_bbox(fex_union)
+empty_raster <- raster(xmn=df_bbox["xmin"],
+                       ymn=df_bbox["ymin"],
+                       xmx=df_bbox["xmax"],
+                       ymx=df_bbox["ymax"]
+                        # ,res=res,
+                       # crs=projection
+                       )
+
+fex_union <- fex_union %>% 
+  mutate(
+    category= as.factor(Name)
+  )
+fexent_rasterized <- rasterize(fex_union, 
+                        empty_raster,
+                        field="category")
+plot(rasterized,axes=TRUE)  
+unique(values(fexent_rasterized))
+fex_union
+
+
+
+fex_union_utm <- st_transform(fex_union,crs = 26332)
+df_bbox<- st_bbox(fex_union_utm)
+empty_raster <- raster(xmn=df_bbox["xmin"],
+                       ymn=df_bbox["ymin"],
+                       xmx=df_bbox["xmax"],
+                       ymx=df_bbox["ymax"],
+                       res=10,
+                       crs=26332
+                       )
+
+fex_union_utm <- fex_union_utm %>% 
+  mutate(
+    category= as.factor(Name)
+  )
+fex_union_utm %>% 
+  mutate(
+    area= st_area(.)
+  )
+fexent_rasterized <- rasterize(fex_union_utm, 
+                        empty_raster,
+                        field="category")
+
+unique(values(fexent_rasterized))
+fex_union
+
+```
+
+
+```{r}
+fex_union_stars<- stars::st_rasterize(sf = fex_union,)
+r_fex <- terra::rast(fex_union_stars)
+r_fex <- terra::rast(fex_union_stars,vals=Name)
+
+
+
+stars::st_as_stars(fex_union,names= "Name")
+ra
+r1 <- stars::st_rasterize(fex_union, field="Name")
+
+
+ck <- raster::rasterize(x = fex_union,r_fex,field = "Name")
+plot(ck$Name)
+
+plot(r_fex$lyr.1)
+```
+
+```{r newFormatKML,eval=F}
+drive_ls()
+drive_download(as_id("19eE94tSB5uX9I8K6Pcv6dZ6IPzfSPlML"),
+                   path = test1fp <- tempfile(fileext = ".kml")
+                   )
+drive_download(as_id("1XNKh7IoXRmcfXEzgQuK7_Hbj-zXmTy6-"),
+                   path = test2fp <- tempfile(fileext = ".kml")
+                   )
+
+test_fext1 <- st_read(dsn=test1fp,layer = "Layer #0" )
+test_fext2 <- st_read(dsn=test2fp,layer = "Layer #0" )
+
+tm_basemap()+
+  tm_shape(test_fext1)+
+  tm_polygons()
+
+tm_basemap()+
+  tm_shape(test_fext2)+
+  tm_polygons()
+
+```
+
