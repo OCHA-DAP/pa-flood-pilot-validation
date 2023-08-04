@@ -1,0 +1,687 @@
+---
+title: "Gauge Discharge Plotting"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: true
+        toc_depth: 2
+date: "2023-08-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  eval = TRUE,
+  results = "asis"
+)
+```
+
+
+```{r libs}
+library(targets)
+library(sf)
+library(tidyverse)
+library(gghdx)
+library(tmap)
+library(janitor)
+library(glue)
+library(patchwork)
+library(ggtext)
+
+# tar_source() # only for basin_pal()
+gghdx()
+```
+
+
+
+```{r loadData}
+tar_load(sample_nrt_df)
+
+sample_nrt_long <- sample_nrt_df %>% 
+  pivot_longer(
+    cols = matches("discharge"),
+    names_to = "forecast_cat",
+    values_to = "Q"
+  ) %>% 
+  mutate(
+    leadtime = replace_na(parse_number(forecast_cat),0) %>% 
+      suppressWarnings(), # don't need the parse_number warning
+    date_predict = date + leadtime,
+    Q_pct_rp2 = Q/x2_years_return_period,
+    gte_2_rp = Q >= x2_years_return_period,
+    gte_5_rp = Q >= x5_years_return_period,
+    gte_20_rp = Q >= x20_years_return_period
+  )
+```
+
+```{r}
+
+#' basin_pal
+#' @description
+#' Helper function to return basin-named palette. Useful if I need to change color scheme across multiple docuemnts, plots, and other elements
+#' 
+#' @return named vector. Names are the basin names ('Benue', 'Lower Niger', 'Niger Delta', 'Upper Niger')
+#' @examples \dontrunP
+#' library(gghdx)
+#' basin_pal()
+
+basin_pal <- function() {
+  c(
+    "tomato-dark",
+    "gray-dark",
+    "sapphire-hdx",
+    "mint-dark"
+  ) %>%
+    map_chr(
+      ~ hdx_colors()[.x]
+    ) %>%
+    set_names(
+      "Benue",
+      "Lower Niger",
+      "Niger Delta",
+      "Upper Niger"
+    )
+}
+
+
+#' accum_pct_gauges_breached
+#'
+#' @param df 
+#' @description 
+#' Given all gauge data we need to look at each day in the forecast and per basin calculate the total
+#' cumulative number % of gauges that have been breached. The complexity comes from needing to accumulate unique gauge
+#' breachings over days. Created as modular function so that we can use in various places easily while keeping code simple and not needing
+#' to track multiple data.frame objects as they evolve in a script.
+#' @param date \code{character} name of variable containing date
+#' @param lgl_var \code{character} name of variable containing logical value
+#'
+#' @return 
+#' data.frame containing
+#'  'basin_name'
+#'  'date_predict'
+#'  'cum_pct' : % of gauges that have been breached up to that point
+#' @examples
+accum_pct_gauges_breached <- function(df,
+                                date="date_predict", 
+                                lgl_var ="gte_2_rp"
+                                ){
+  df %>%
+    group_by(basin_name, !!sym(date)) %>%
+    summarise(
+      g_ids = list(unique(gauge_id)),
+      g_ids_x = list(unique(gauge_id[!!sym(lgl_var)])),
+      .groups = "drop_last"
+    ) %>%
+    mutate(
+      g_ids_accum = accumulate(g_ids_x, `c`),
+      g_ids_accum_unique = map(g_ids_accum, ~ unique(.x)),
+      cum_pct = map_int(g_ids_accum_unique, length) / map_int(g_ids, length)
+    ) %>%
+    select(-starts_with("g_ids")) %>%
+    ungroup()
+}
+
+
+#' Title
+#'
+#' @param df 
+#' @param date 
+#' @param threshold 
+#' @param basin_palette 
+#'
+#' @return
+#' @export
+#'
+#' @examples \dontrun{
+#' gen_plot_title(gauge_nrt_long)
+#' }
+gen_plot_title <- function(df,
+                       date = "date_predict",
+                       threshold = 0.5,
+                       basin_palette = basin_pal()) {
+  date_forecast_gen <- min(df[[date]])
+
+  basin_df_cum_pct <- accum_pct_gauges_breached(df = df, lgl_var = "gte_2_rp")
+  
+  basin_first_breach <- basin_df_cum_pct %>%
+    group_by(basin_name) %>%
+    filter(cum_pct >= threshold) %>%
+    arrange(!!sym(date)) %>% 
+    slice(1) %>%
+    ungroup()
+
+  
+  if (nrow(basin_first_breach) == 0) {
+    ret <- glue(
+      "{date_forecast_gen}: No Warning issued"
+    )
+  } else {
+    basin_vec_syled <- basin_first_breach %>%
+      mutate(
+        col = basin_palette[basin_name],
+        basin_name_styled = glue("<span style= 'color: {col}'> {basin_name} </span>")
+      ) %>%
+      pull(basin_name_styled)
+    
+    # more than 1 basin we need plural
+    if (length(basin_vec_syled) > 1) {
+      ret <- glue(
+        "{date_forecast_gen}: Flood warning issued for the {glue_collapse(basin_vec_syled,sep=',',last='&')} Basins in Nigeria"
+      )
+    }
+    # 1 basin singular
+    if (length(basin_vec_syled) == 1) {
+      ret <- glue(
+        "{date_forecast_gen}: Flood warning issued for the {basin_vec_syled} Basin in Nigeria"
+      )
+    }
+  }
+  return(ret)
+}
+
+
+```
+
+
+
+```{r,eval=F}
+# average discharge predicted per day per basin.
+Q_pct_rp2_mean <- sample_nrt_long %>% 
+  group_by(basin_name,date_predict) %>% 
+  summarise(
+    Q_pct_rp2= mean(Q_pct_rp2,na.rm=T),
+    .groups="drop"
+  ) 
+
+# plot inputs
+plot_title <- gen_plot_title(df = sample_nrt_long,date = "date_predict",threshold = 0.8,basin_palette = basin_pal())
+# for setting plot y-axis limits
+Q_pct_max <- max(Q_pct_rp2_mean$Q_pct_rp2)
+ymax_lim <- ifelse(Q_pct_max<1,1,round(Q_pct_max+0.2,1))
+
+# plot
+Q_pct_rp2_mean %>% 
+  ggplot(
+    aes(x= date_predict, y= Q_pct_rp2,
+    color= basin_name, group=basin_name
+    )
+  )+
+    geom_smooth(se=FALSE)+
+  scale_color_manual(values = basin_pal())+
+   scale_x_date(breaks = "1 day", date_labels = "%m-%d") +
+    scale_y_continuous(
+      breaks = seq(0, ymax_lim, .2),
+      limits = c(0,ymax_lim),
+      labels = scales::percent,
+    ) +
+  labs(
+    title = plot_title,
+      y = "Average gauge discharge (% 2 Year RP)",
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 90),
+      axis.title.x = element_blank(),
+      legend.title = element_blank(),
+      plot.subtitle = element_markdown()
+    )
+  
+```
+
+# Simplified Basin Level Plots
+
+Latest discussion we agreed that we will keep it simple and just plot the average discharge per basin (normalized to the 2 year RP threshold) 
+
+Let's see how this could look
+
+```{r}  
+# since I am going to make about 5 plots w/ the same code I will just put it all together in a func
+plot_average_discharge_normalized <-  function(df,
+                                               date="date_predict", 
+                                               threshold=0.8,
+                                               basin_palette=basin_pal()
+                                               ){
+  # average discharge predicted per day per basin.
+df_p <- df %>% 
+  group_by(basin_name,!!sym(date)) %>% 
+  summarise(
+    Q_pct_rp2= mean(Q_pct_rp2,na.rm=T),
+    .groups="drop"
+  ) 
+
+# plot inputs
+plot_title <- gen_plot_title(df = df,
+                             date = date,
+                             threshold = threshold,
+                             basin_palette = basin_palette)
+# for setting plot y-axis limits
+Q_pct_max <- max(df_p$Q_pct_rp2)
+ymax_lim <- ifelse(Q_pct_max<1,1,round(Q_pct_max+0.2,1))
+
+# plot
+df_p %>% 
+  ggplot(
+    aes(x= date_predict,
+        y= Q_pct_rp2,
+        color= basin_name,
+        group=basin_name
+    )
+  )+
+    geom_smooth(se=FALSE)+
+  scale_color_manual(values = basin_palette)+
+   scale_x_date(breaks = "1 day", date_labels = "%m-%d") +
+    scale_y_continuous(
+      breaks = seq(0, ymax_lim, .2),
+      limits = c(0,ymax_lim),
+      labels = scales::percent,
+    ) +
+  labs(
+    title = plot_title,
+      y = "Average gauge discharge (% 2 Year RP)",
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 90),
+      axis.title.x = element_blank(),
+      legend.title = element_blank(),
+      plot.subtitle = element_markdown(),
+      plot.title = element_markdown(size = 15)
+    )
+
+}
+```
+
+
+```{r genFakeData}
+
+# I came up w/ 5 scenarios that could be worth testing plots for:
+# scenario 1 - no alert, no threshold breach
+# scenario 2 - no alert some gauge breach (1 basin)
+# scenario 3 - no alert- some gauge breach (>1 basin)
+# scenario 4 - alert (1 basin)
+# scenario 5 - alert (>1 basin)
+
+
+# below is a workflow to generate the 5  scenarios
+
+
+#' sample_gauges
+#'
+#' @param df  data.frame containing hybas_id (basin id), gauge_id
+#' @param samp_pct \code{numeric} percent of gauges to sample.
+#'
+#' @return named list of vectors - each list is named by basin and contains names of gauges to sample to reach approximate %
+
+sample_gauges <- function(df,samp_pct){
+  df_distinct <- df %>% 
+    distinct(hybas_id, gauge_id)  
+  df_l <-  split(df_distinct,df_distinct$hybas_id)
+  df_l %>% 
+    map(
+      \(dft){
+        num_gauge <- nrow(dft)
+        samp_n = floor(num_gauge * samp_pct)
+        sample(dft$gauge_id, samp_n)
+      }
+    )
+}
+
+
+sampled_gauges_25_pct <- sample_gauges(df = sample_nrt_long,samp_pct = 0.25)
+sampled_gauges_85_pct <- sample_gauges(df = sample_nrt_long,samp_pct = 0.85)
+
+
+scen_1 <-  sample_nrt_long
+scen_2 <-  sample_nrt_long %>% 
+    rowwise() %>% 
+    mutate(
+      Q = case_when(
+        gauge_id %in% sampled_gauges_25_pct$`1040909900`  & leadtime==5~ sample(x2_years_return_period:x5_years_return_period,1),
+        .default= Q
+    )
+    ) %>%
+  ungroup()
+
+
+scen_3 <-  sample_nrt_long %>% 
+    rowwise() %>% 
+    mutate(
+      Q = case_when(
+        gauge_id %in% sampled_gauges_25_pct$`1040909900`  & leadtime==5~ sample(x2_years_return_period:x5_years_return_period,1),
+        gauge_id %in% sampled_gauges_25_pct$`1040760290`  & leadtime==5~ sample(x2_years_return_period:x5_years_return_period,1),
+        .default= Q
+      )
+    ) %>%
+  ungroup()
+
+
+scen_4 <-  sample_nrt_long %>% 
+    rowwise() %>% 
+    mutate(
+      Q = case_when(
+
+        gauge_id %in% sampled_gauges_85_pct$`1040909900`  & leadtime==5~ sample(x2_years_return_period:x5_years_return_period,1),
+        
+        .default= Q
+      )
+    ) %>%
+  ungroup()
+
+
+scen_5 <-  sample_nrt_long %>% 
+    rowwise() %>% 
+    mutate(
+      Q = case_when(
+        gauge_id %in% sampled_gauges_85_pct$`1040909900`  & leadtime==5~ sample(x2_years_return_period:x5_years_return_period,1),
+        gauge_id %in% sampled_gauges_85_pct$`1040760290`  & leadtime==5~ sample(x2_years_return_period:x5_years_return_period,1),
+        .default= Q
+      )
+    ) %>%
+  ungroup()
+
+Q_scenarios <- mget(paste0("scen_",1:5)) %>% 
+  # recalculate pct 2 year RP & other logicals based on new Q/discharge value
+    map(
+    ~.x %>% 
+       mutate(
+    Q_pct_rp2 = Q/x2_years_return_period,
+    gte_2_rp = Q >= x2_years_return_period,
+    gte_5_rp = Q >= x5_years_return_period,
+    gte_20_rp = Q >= x20_years_return_period
+  )
+  )
+
+p_Q_fake <- Q_scenarios %>% 
+  map(
+    ~.x %>% 
+      plot_average_discharge_normalized()
+  )
+```
+
+## Scenario 1 (real data)
+
+- Below basin threshold - no warning
+- no gauge threshold breached
+
+```{r}
+p_Q_fake$scen_1
+```
+
+## Scenario 2
+
+- Below basin threshold - no alert
+- some gauges breached in 1 basin
+```{r}
+p_Q_fake$scen_2
+```
+
+## Scenario 3
+
+- Below basin threshold - no alert
+- some gauges breached in >1 basin
+
+```{r}
+p_Q_fake$scen_3
+```
+
+## Scenario 4
+
+- Above basin threshold (1 basin) - warning issued
+
+```{r}
+p_Q_fake$scen_4
+```
+
+## Scenario 5
+
+- Above basin threshold (>1  basin) - warning issued
+
+```{r}
+p_Q_fake$scen_5
+```
+ 
+# Previous Plot/Combo
+
+Here we see a slight modification to plot combination shared in the last email for comparison. To keep things brief i will just plot **scenario 4**
+
+```{r}
+df_old_plot <- Q_scenarios$scen_5
+breach_pct_accum <- accum_pct_gauges_breached(df =df_old_plot,date = "date_predict",lgl_var = "gte_2_rp")
+
+df_thresh_breach_pts <- breach_pct_accum %>% 
+    group_by(basin_name) %>%
+    filter(cum_pct >= 0.8) %>%
+    slice(1) %>%
+    ungroup()
+gauge_crossing_id <- df_old_plot %>% 
+  filter(gte_2_rp) %>% 
+  pull(gauge_id) %>% 
+  unique()
+
+df_old_plot <- df_old_plot %>%
+  mutate(alpha_line = ifelse(gauge_id %in% gauge_crossing_id, 1, .25))
+  
+p_old_gauge_level <- df_old_plot %>%
+    ggplot(aes(
+      x = date_predict,
+      y = Q_pct_rp2,
+      color = basin_name,
+      group = gauge_id,
+      alpha = alpha_line
+    )) +
+  geom_vline(
+    data = df_thresh_breach_pts,
+    aes(xintercept = date_predict),
+    color = "tomato",
+    alpha = 0.2,
+    lwd = 7
+  ) +
+  geom_hline(aes(yintercept = 1), color = "tomato", alpha = 0.5, lwd = 0.7, linetype = "dashed") +
+  geom_line() +
+  labs(
+    y = "Gauge Discharge (% 2 Year RP)",
+  )+
+    scale_x_date(breaks = "1 day", date_labels = "%m-%d") +
+    scale_y_continuous(
+      breaks = seq(0, 4, .2),
+      labels = scales::percent
+    ) +
+    scale_color_manual(values = basin_pal()) +
+    guides(alpha = "none") +
+    theme(
+      axis.text.x = element_text(angle = 90),
+      axis.title.x = element_blank(),
+      legend.title = element_blank(),
+      plot.subtitle = element_markdown()
+    )
+
+### alright since we are going to do this for different scenarios let's put it into a function
+plot_gauge_discharge_pct <- function(df,
+                                     date="date_predict",
+                                     threshold=0.8 ){
+  
+  
+  df_breach_pct_accum <- accum_pct_gauges_breached(df =df,
+                                                   date = date,
+                                                   lgl_var = "gte_2_rp")
+  
+  df_thresh_breach_pts <- df_breach_pct_accum %>% 
+    group_by(basin_name) %>%
+    filter(cum_pct >threshold) %>%
+    slice(1) %>%
+    ungroup()
+  
+  gauge_crossing_id <- df %>% 
+    filter(gte_2_rp) %>% 
+    pull(gauge_id) %>% 
+    unique()
+  
+  df_p <- df %>%
+    mutate(alpha_line = ifelse(gauge_id %in% gauge_crossing_id, 1, .25))
+  
+  p_gauge <- df_p %>%
+    ggplot(aes(
+      x = date_predict,
+      y = Q_pct_rp2,
+      color = basin_name,
+      group = gauge_id,
+      alpha = alpha_line
+    )) +
+    geom_vline(
+      data = df_thresh_breach_pts,
+      aes(xintercept = date_predict),
+      color = "tomato",
+      alpha = 0.2,
+      lwd = 7
+    ) +
+    geom_hline(aes(yintercept = 1), color = "tomato", alpha = 0.5, lwd = 0.7, linetype = "dashed") +
+    # geom_smooth(se=FALSE)+
+    geom_line()+
+    labs(
+      y = "Gauge Discharge (% 2 Year RP)",
+    )+
+    scale_x_date(breaks = "1 day", date_labels = "%m-%d") +
+    scale_y_continuous(
+      breaks = seq(0, 4, .2),
+      labels = scales::percent
+    ) +
+    scale_color_manual(values = basin_pal()) +
+    guides(alpha = "none") +
+    theme(
+      axis.text.x = element_text(angle = 90),
+      axis.title.x = element_blank(),
+      axis.title.y = element_text(size=11),
+      legend.title = element_blank(),
+      plot.title = element_blank()
+      # plot.subtitle = element_markdown()
+    )
+  return(p_gauge)
+}
+
+```
+
+
+```{r}
+#' Title
+#'
+#' @param df
+#'
+#' @return
+#' @export
+#'
+#' @examples \dontrun{
+#' pct_crossed(Q_class)
+#' }
+#'
+plot_basin_cum_pct_crossed <- function(df ,
+                                       threshold = 0.8,
+                                       date = "date_predict",
+                                       lgl_var,
+                                       basin_palette = basin_pal()) {
+  
+  plot_title <- gen_plot_title(df = df,
+                             date = date,
+                             threshold = threshold,
+                             basin_palette = basin_palette)
+  
+  df_breach_pct_accum <- accum_pct_gauges_breached(df =df,
+                                                   date = date,
+                                                   lgl_var = "gte_2_rp")
+  
+  df_thresh_breach_pts <- df_breach_pct_accum %>% 
+    group_by(basin_name) %>%
+    filter(cum_pct >threshold) %>%
+    slice(1) %>%
+    ungroup()
+  
+  df_breach_pct_accum %>%
+    ggplot(aes(
+      x = date_predict,
+      y = cum_pct,
+      color = basin_name
+    )) +
+    geom_vline(
+      data = df_thresh_breach_pts,
+      aes(xintercept = date_predict),
+      color = "tomato",
+      alpha = 0.2,
+      lwd = 7
+    ) +
+    # geom_smooth(alpha=0.5,se=FALSE,method="loess")+
+    geom_line(alpha=0.5)+
+    geom_point() +
+    scale_color_manual(values = basin_palette) +
+    scale_y_continuous(labels = scales::percent) +
+    scale_x_date(breaks = "1 day", date_labels = "%m-%d") +
+    labs(title = plot_title,
+          y= "Basin Status: % Gauges Breaching 2 Year RP"
+         ) +
+    geom_hline(
+      yintercept = threshold,
+      color = "tomato",
+      lwd = 0.7,
+      alpha = 0.5,
+      linetype = "dashed"
+    ) +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_blank(),
+      axis.title.x = element_blank(),
+      axis.title.y = element_text(size = 11),
+      plot.title = element_markdown(size=12)
+      # axis.title = element_markdown(),
+      # legend.title = element_blank(),
+      # plot.subtitle = element_markdown(),
+      # plot.title = element_markdown(size)
+    )
+}
+
+
+
+
+# plot_basin_cum_pct_crossed(df = Q_scenarios$scen_5,
+#                            threshold = 0.8,
+#                            date = "date_predict",
+#                            lgl_var = "gte_2_rp",
+#                            basin_palette = basin_pal())
+```
+
+```{r out.height="6"}
+p_gauge_level_scen5 <- plot_gauge_discharge_pct(df = Q_scenarios$scen_5,date = "date_predict",threshold = 0.8)
+
+p_basin_level_scen5  <- plot_basin_cum_pct_crossed(df = Q_scenarios$scen_5,
+                           threshold = 0.8,
+                           date = "date_predict",
+                           lgl_var = "gte_2_rp",
+                           basin_palette = basin_pal())
+
+p_combo <- p_basin_level_scen5+
+  p_gauge_level_scen5+
+  plot_layout(ncol = 1,
+              nrow = 2)
+```
+
+```{r,fig.height=8}
+p_combo
+```
+
+
+**smoothing** Here I've smoothed the line in the top plot and you can see how this could be misleading.
+
+Perhaps there is another smoothing `method` available in `geom_smooth` that would be be better, but would need to look into this, currently using default `loess`
+
+```{r,fig.height=7}
+p_combo_w_smooth <- p_basin_level_scen5 +
+  geom_smooth(se=F,alpha=0.2) +
+  p_gauge_level_scen5 +
+  plot_layout(ncol = 1,
+              nrow = 2)
+```
+
+```{r,fig.height=8}
+p_combo_w_smooth
+```
+
+
+
+ 

@@ -143,38 +143,96 @@ list(
   
   # read in full wb from google.
   tar_target(
-    name = gauge_google_wb_full,
+    name = gauge_google_wb,
     command = read_gauge_googlesheets(url = Sys.getenv("GFH_GAUGE_URL"))
   ),
-
-  # remove any potential duplicate records by taking latest update_time_utc per date
+  ### Gauge Locations ####
+  # create spatial object of gauge locations
   tar_target(
-    name = gauge_google_wb,
-    command = gauge_google_wb_full %>%
-      imap(\(df, name_df){
-        gauge_realtime_names <- str_subset(name_df, "^hybas_.*$")
-        ret <- df
-        if (name_df %in% gauge_realtime_names) {
-          ret <- df %>%
-            mutate(
-              date = dmy(date),
-              update_time_utc = ymd_hms(update_time_utc)
-            ) %>%
-            group_by(date) %>%
-            filter(
-              update_time_utc == max(update_time_utc)
-            ) %>%
-            ungroup()
-        }
-        return(ret)
+    name = all_gauge_google_sp,
+    command = st_as_sf(gauge_google_wb$metadata, 
+                       coords = c("longitude", "latitude"),
+                       crs = 4326)
+  ),
+  tar_target(
+    name= gauge_locations_sp,
+    command = all_gauge_google_sp %>%
+      # decided to remove these as they are not along main monitored rivers
+      filter(
+        !(gauge_id %in% c("hybas_1120794570",
+                          "hybas_1120741070",
+                          "hybas_1120946640",
+                          "hybas_1120974450", 
+                          "hybas_1120981190"))
+      ) 
+  ),
+  # assign each gauge to a basin (for both basin levels 4 & 5)
+  tar_target(
+    name = all_gauges_basin_google,
+    command = basins_clipped %>%
+      map(\(lyr){
+        st_join(all_gauge_google_sp, lyr)
       })
   ),
   tar_target(
+    name = gauges_basin_google,
+    command = basins_clipped %>%
+      map(\(lyr){
+        st_join(gauge_locations_sp, lyr)
+      })
+  ),
+  # remove any potential duplicate records by taking latest update_time_utc per date
+  tar_target(
+    name = g_realtime_gauge_all,
+    command = gauge_google_wb %>% 
+      keep_at(at = ~str_detect(.x,"hybas_")) %>% 
+      bind_rows() %>% 
+      # remove potential duplication issue where two discharge values may get appended to googlesheed w/ same date
+      mutate(
+        date= dmy(date),
+        update_time_utc = ymd_hms(update_time_utc)
+      ) %>% 
+      group_by(date,gauge_id) %>%
+      filter(
+        update_time_utc == max(update_time_utc)
+      ) %>%
+      ungroup() 
+  ),
+  tar_target(
     name = g_realtime_gauge,
-    command = gauge_google_wb %>%
-      keep_at(at = ~ str_detect(.x, "hybas_")) %>%
-      bind_rows() %>%
-      mutate(date = dmy(date))
+    command = g_realtime_gauge_all %>% 
+      filter(gauge_id %in% gauge_locations_sp$gauge_id)
+  ),
+  
+  # making a sample data set to use for making visuals without needing to hit the
+  # google api every time.
+  tar_target(
+    name= sample_nrt_df,
+    command =  g_realtime_gauge %>%
+      left_join(
+        gauges_basin_google$hybas_af_lev04_v1c %>% 
+          st_drop_geometry() %>% 
+          clean_names() %>% 
+          select(gauge_id, river,hybas_id)
+      ) %>% 
+      mutate(
+        basin_name = case_when(
+          hybas_id == 1040909900 ~ "Benue",
+          hybas_id == 1040909890 ~ "Lower Niger",
+          hybas_id == 1040022420 ~ "Niger Delta",
+          hybas_id == 1040760290 ~ "Upper Niger",
+          .default= NA
+        ),.before=everything()
+      ) %>% 
+      group_by(gauge_id) %>%
+      
+      filter(
+        # date==max(date)
+        date=="2023-08-03"
+      ) %>%
+      select(date, gauge_id,hybas_id, basin_name, contains("discharge"),contains("return")) %>%
+      ungroup() 
+
   ),
   ### Google historical-reanalysis (nowcast) ####
   # compile all historical data into one data.frame
@@ -193,20 +251,6 @@ list(
   # Wrangling ####
 
   ## Realtime (nowcast & forecast) from google ####
-
-  # create spatial object of gauge locations
-  tar_target(
-    name = gauge_google_sp,
-    command = st_as_sf(gauge_google_wb$metadata, coords = c("longitude", "latitude"), crs = 4326)
-  ),
-  # assign each gauge to a basin (for both basin levels 4 & 5)
-  tar_target(
-    name = gauges_basin_google,
-    command = basins_clipped %>%
-      map(\(lyr){
-        st_join(gauge_google_sp, lyr)
-      })
-  ),
 
   ## Historical nowcast data ####
   # based on calculated RPs (from google) classify each prediction (daily 1981-current) for each gauge
