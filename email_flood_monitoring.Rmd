@@ -1,0 +1,127 @@
+---
+title: "email"
+output: blastula::blastula_email
+---
+
+<style type = "text/css">
+
+h1, h2, h3 {
+  font-family: Arvo, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-weight: normal
+}
+
+p {
+  font-family: "Source Sans Pro", "Helvetica Neue", Helvetica, Arial, sans-serif
+}
+
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fontfamily = "Sans Source Pro",
+  results="asis",
+  fig.align='center',
+  fig.cap = "" 
+)
+```
+
+```{r}
+# library(targets)
+# library(tidyverse)
+# # library(dplyr)
+# # library(ggplot2)
+# library(glue)
+# library(gghdx)
+# # library(readr)
+# library(googledrive)
+# library(googlesheets4)
+# library(blastula)
+# library(here)
+# library(sf)
+# library(janitor)
+gghdx()
+source("src/email/email_utils.R")
+```
+
+```{r, class.output = "banner"}
+banner_drib <- drive_dribble %>%
+  filter(name == "centre_banner.png")
+drive_download(banner_drib, path = banner_path <- tempfile(fileext = ".png"))
+
+add_image(
+  file = banner_path,
+  alt = "Centre for Humanitarian Data banner",
+  align = "left",
+  width = "25%"
+)
+```
+
+
+# Nigeria Riverine Flood Monitoring
+
+The Nigeria riverine flood monitoring is a pilot project managed by the OCHA Centre for Humanitarian Data in collaboration with the Google Flood Forecasting Initiative in order to bring attention to changes in key indicators relevant to humanitarian response. The monitoring is currently limited to the Niger and Benue river basins in Nigeria.
+
+## Flood Warning `r dt_made_chr`
+
+**`r txt_warning_status`**
+
+The alerts status is determined based on forecast discharge values from Google's [Flood Hub](https://sites.research.google/floods). Forecast data from 55 gauges across 4 basins is analysed to determine the alert status, which is defined as 80% of gauges within a single basin are predicted to reach a discharge greater than a 1 in 2 year.
+
+The map shows the gauge locations and the warning status by basin. For more details, including the estimated flood extent, please visit Google's [Flood Hub](https://sites.research.google/floods).
+
+```{r MapBasins}
+m_basin_alerts
+```
+
+Below we see the average predicted discharge as a percentage of the 2 year return period value for 7 days for each basin. Each line represents one monitored basin
+
+```{r PlotDischarge}
+add_ggplot_custom(
+  plot_object = p_discharge,
+  alt = "Alert plot",
+  height = 6,
+  width = 6,
+  html_width = 650
+)
+
+```
+
+**Forecast data source:** Google.
+Data was accessed on `r gsub("^0", "", format(as_date(Sys.Date()), "%d %B %Y"))`. 
+
+----
+
+## Contact
+
+Contact the OCHA Centre for Humanitarian Data via Leonardo Milano, Team Lead
+for Data Science at leonardo.milano@un.org with any questions or feedback.
+
+----
+
+```{r FooterLogo}
+
+logo_drib <- drive_dribble %>%
+  filter(name == "ocha_logo_wide.png")
+
+drive_download(logo_drib, path = logo_path <- tempfile(fileext = ".png"))
+
+add_image(
+  file = logo_path,
+  align = "center",
+  width = "25%"
+)
+```
+
+<p>
+<center>
+
+<b> OCHA Centre For Humanitarian Data </b>
+
+Fluwelen Burgwal 58 | 2511 CJ The Hague | The Netherlands
+
+</center>
+</p>

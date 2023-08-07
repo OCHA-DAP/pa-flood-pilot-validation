@@ -86,7 +86,8 @@ cumulative_gauge_pct <- function(df, lgl_var = "gte_2_rp") {
     group_by(basin_name, date_predict) %>%
     summarise(
       g_ids = list(unique(gauge_id)),
-      g_ids_x = list(unique(gauge_id[!!sym(lgl_var)])), .groups = "drop_last"
+      g_ids_x = list(unique(gauge_id[!!sym(lgl_var)])),
+      .groups = "drop_last"
     ) %>%
     mutate(
       g_ids_accum = accumulate(g_ids_x, `c`),
@@ -123,29 +124,6 @@ get_thresh_crossing <- function(df) {
 }
 
 
-#' Title
-#'
-#' @return
-#' @export
-#'
-#' @examples
-basin_pal <- function() {
-  c(
-    "tomato-dark",
-    "gray-dark",
-    "sapphire-hdx",
-    "mint-dark"
-  ) %>%
-    map_chr(
-      ~ hdx_colors()[.x]
-    ) %>%
-    set_names(
-      "Benue",
-      "Lower Niger",
-      "Niger Delta",
-      "Upper Niger"
-    )
-}
 
 
 gen_subtitle <- function(df,

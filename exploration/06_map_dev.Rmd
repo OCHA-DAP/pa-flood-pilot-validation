@@ -1,0 +1,407 @@
+---
+title: "Map Viz"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: true
+        toc_depth: 2
+date: "2023-08-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  eval = TRUE,
+  results = "asis"
+)
+```
+
+```{r libs}
+library(sf)
+library(gghdx)
+library(tidyverse)
+gghdx()
+
+```
+## Data
+
+The mapping requires a fair amount of data layers as well as data wrangling. Therefore this doc will also serve to document the data wrangling steps required in the pipeline,
+
+
+
+
+```{r pullDataFuncs}
+#' proj_map_viz_dataset
+#'
+#' @param dataset \code{character} name of data set to load 
+#'  options are: 
+#'    "wca" (West & Central Africa)
+#'    "river"
+#'    "adm1" (Nigeria Admin 1)
+#'
+#' @return spatial data frame containing layers downloaded from hdx
+proj_map_viz_dataset <-  function(dataset){
+  if(dataset=="wca"){
+    ret <- pull_dataset("b20cd345-93fb-43bd-9c6e-7bc7d87b63eb") %>%
+      get_resource(1) %>%
+      read_resource()
+  }
+  if(dataset=="river"){
+    ret <- pull_dataset("741c6f20-6956-420d-aae4-37015cdd1ad4") %>%
+      get_resource(2) %>%
+      # rhdx::get_resource_layers()
+      read_resource(layer="NGA_rvrsl_1m_esri")
+  }
+  if(dataset=="adm1"){
+    ret <- pull_dataset("81ac1d38-f603-4a98-804d-325c658599a3") %>% 
+      get_resource(3) %>% 
+      read_resource(layer = "nga_admbnda_adm1_osgof_20190417")
+  }
+  return(ret)
+}
+
+# let's put the funcs above together with all hdx layers w
+
+#' hdx_map_viz_layers
+#' @description
+#' utility function to load hdx sourced spatial layers for mapping
+#'
+#' @return named list containing spatial data.frames to map
+#' @examples \dontrun{
+#' library(tidyverse)
+#' library(rhdx)
+#' hdx_map_viz_layers()
+#' }
+hdx_map_viz_layers <- function(){
+  list(
+    river= proj_map_viz_dataset(dataset="river"),
+    west_central_africa = proj_map_viz_dataset(dataset="wca"),
+    admin_1 = proj_map_viz_dataset(dataset="adm1")
+  )
+}
+
+```
+
+```{r pullMapData}
+L <- hdx_map_viz_layers()
+
+nga_adm0 <- L$west_central_africa %>% 
+  filter(admin0Pcod=="NG")
+
+```
+
+```{r gdriveData}
+### Basin Level 4 ####
+drive_download(
+  as_id("1AsB_Cf9QQb3vkp9ebIFvTPZ5gBYqYRJR"),
+  path = basin_fp <- tempfile(fileext = ".rds")
+  )
+
+gdf_basins_poly <- read_rds(basin_fp) %>% 
+  filter_basins() %>% 
+  st_intersection(nga_adm0)
+```
+
+
+```{r LoadForecastData}
+tar_load(gauge_google_wb) # temp
+
+
+#' filter_gauges
+#' @desciption
+#' convenience function to remove gauges that we are not using
+#' @param df data.frame
+#' @param gauge_id \code column name containing gauge_id (default = gauge_id)
+#'
+#' @return data.frame with gauges removed that we are not monitoring
+
+filter_gauges <-  function(df, gauge_id=gauge_id){
+  df %>% 
+    filter(
+      (!{{ gauge_id }} %in% c("hybas_1120794570",
+                           "hybas_1120741070",
+                           "hybas_1120946640",
+                           "hybas_1120974450", 
+                           "hybas_1120981190"))
+    ) 
+}
+
+# gauge_wb <- load_forecast_wb
+
+
+gdf_gauge <- st_as_sf(gauge_google_wb$metadata, 
+                       coords = c("longitude", "latitude"),
+                       crs = 4326) %>% 
+  filter_gauges()
+
+
+
+df_forecast <- df %>% 
+  clean_names() %>%  # maybe just clean
+  select_gauges() %>% 
+  most_recent_forecast() %>% 
+  join_basin_data() %>% 
+  pivot_longer(
+    cols = matches("discharge"),
+    names_to = "forecast_cat",
+    values_to = "Q"
+  ) %>% 
+  compare_forecast_to_rps()
+
+
+gauge_google_wb$metadata
+  
+```
+
+```{r WrangleForecastData}
+
+tar_load(sample_nrt_df)# just for convenience
+df_forecast <- sample_nrt_df
+
+df_forecast_long <- df_forecast %>% 
+  pivot_longer(
+    cols = matches("discharge"),
+    names_to = "forecast_cat",
+    values_to = "Q"
+  ) %>% 
+  mutate(
+    leadtime = replace_na(parse_number(forecast_cat),0) %>% 
+      suppressWarnings(), # don't need the parse_number warning
+    date_predict = date + leadtime,
+    Q_pct_rp2 = Q/x2_years_return_period,
+    gte_2_rp = Q >= x2_years_return_period,
+    gte_5_rp = Q >= x5_years_return_period,
+    gte_20_rp = Q >= x20_years_return_period
+  )
+
+gauge_ids_breaching <- df_forecast_long %>% 
+  filter(gte_2_rp) %>% 
+  distinct(gauge_id) %>% 
+  pull(gauge_id)
+
+gdf_gauge_pts <- gdf_gauge %>% 
+  mutate(
+    lgl_gauge_status =gauge_id %in% gauge_ids_breaching,
+    `Gauge Status` =if_else(lgl_gauge_status,"Threshold Exceeded","Below Threshold"),
+    aes_dot_size =if_else(lgl_gauge_status,0.01,.005),
+    aes_dot_alpha = if_else(lgl_gauge_status,1,0.5)
+  )
+
+# Aggregate Alert Status to basin level.
+df_basin_alert_status <- accumulate_unique_gauge_breach_pct(
+  df = df_forecast_long,
+  lgl_var = "gte_2_rp"
+) %>% 
+  group_by(basin_name) %>% 
+  slice_max(
+    order_by = cum_pct,
+    with_ties = F
+  ) %>% 
+  ungroup() %>% 
+  mutate(
+    `Basin Alert Status` = if_else(cum_pct >= 0.8 ,"Warning","No Warning")
+  )
+
+
+
+gdf_basin_alert_poly <- gdf_basins_poly %>% 
+  left_join(
+    df_basin_alert_status,by="basin_name"
+  )
+
+gdf_basin_alert_lines <- st_cast(gdf_basin_alert_poly,"MULTILINESTRING")
+# Now we have all forecast/basin data ready to map - let's grab the external layers from HDX
+```
+
+
+
+
+
+```{r}
+# Now that we have loaded the layers. It's time to map.
+
+
+#' nga_base_map
+#' @description
+#' convenience function to style the base map aesthetics - functinonalized just to simplify pipeline code
+#' @param west_africa_adm0 
+#' @param country_fill \code{character} background color of nga
+#' @param surrounding_fill \code{character} background color for surrounding 
+#'
+#' @return map made with `{tmap}`
+
+nga_base_map <- function(
+    west_africa_adm0,
+    country_fill = "white",
+    surrounding_fill = "lightgrey") {
+  
+  # countries of interest
+  coi <- west_africa_adm0 %>%
+    mutate(
+      aoi = ifelse(admin0Pcod == "NG", "aoi", "not_aoi")
+    )
+  
+  # split
+  coi_l <- split(coi, coi$aoi)
+  
+  # map
+  tm_shape(coi, bbox = coi_l$aoi) +
+    tm_polygons(
+      col = "aoi",
+      palette = c(country_fill, surrounding_fill),
+      legend.show = F
+    )+
+    tm_shape(coi_l$not_aoi)+
+    tm_text(text= "admin0Name",col = "white")+
+    tm_shape(coi_l$aoi)+
+    tm_borders(col = "#414141",lwd = 5,alpha=1)+
+    tm_shape(coi_l$aoi,legend.show=F)+
+    tm_borders(
+      col="white",
+      # lty = 3, # linetype long dash
+      lwd=1,
+      alpha=0.7)
+}
+```
+
+
+```{r MapNGAbase}
+nga_base_map(
+  west_africa_adm0 = L$west_central_africa,
+  country_fill = "white"
+)
+```
+
+```{r MapBasinAlert}
+
+m_basin_alerts <- nga_base_map(
+  west_africa_adm0 = L$west_central_africa,
+  country_fill = "white",
+  surrounding_fill = hdx_colors()["gray-dark"]
+  )+
+  tm_shape(
+   gdf_basin_alert_poly
+    
+  )+
+  tm_polygons(col= "Basin Alert Status",
+              palette=c(
+                `No Warning`= hdx_colors()["mint-ultra-light"],
+                `Warning` = hdx_colors()["tomato-hdx"]
+                ) ,
+              alpha = 0.5,
+              border.col = NULL 
+  )+
+  tm_shape(
+    gdf_basin_alert_lines,
+    legend.show=F
+  )+
+  tm_lines(col = "Basin Alert Status",
+           legend.col.show = F,
+             palette=c(hdx_colors()["mint-hdx"],
+                       hdx_colors()["tomato-dark"]),
+           lwd=4,alpha = 0.3
+           )+
+  tm_shape(L$admin_1)+
+  tm_borders(
+    col=hdx_colors()["gray-dark"],
+    alpha = 0.2
+  )+
+  tm_shape(L$river)+
+  tm_lines(
+    col=hdx_colors()["sapphire-hdx" ],
+    lwd=3)+
+  # gauge locations
+  tm_shape(gdf_gauge_pts,
+           legend.show=F
+  )+
+  tm_dots(
+             col="Gauge Status",
+             size= 0.2,
+             palette=c("#25252533","black"),
+             legend.size.show=F
+             )+
+  tm_shape(gdf_basin_alert_poly)+
+  tm_text(text = "basin_name",shadow = T)+
+  tm_layout(main.title.size = 0.5,
+            title.size = 0.5,
+            legend.text.size = 0.5,
+            legend.title.size = 0.7,
+            bg.color = "lightblue")
+
+```
+
+```{r MapFuncBasinStatus}
+
+# alright let's put it all together
+map_basin_status <- function(basin_poly=gdf_basin_alert_poly,
+                             west_africa_poly=L$west_central_africa,
+                             nga_admin_1_poly,
+                             river_line,
+                             aoi_bg = "white",
+                             surrounding_bg=hdx_colors()["gray-dark"],
+                             basin_alert_fill = c( hdx_colors()["mint-ultra-light"],
+                                                   hdx_colors()["tomato-hdx"])
+                             ){
+  
+  gdf_basin_alert_lines
+  
+  nga_base_map(
+  west_africa_adm0 = west_africa_poly,
+  country_fill = aoi_bg,
+  surrounding_fill = surrounding_bg
+  )+
+  tm_shape(
+   gdf_basin_alert_poly
+    
+  )+
+  tm_polygons(col= "Basin Alert Status",
+              palette=c(
+                `No Warning`= basin_alert_fill[1],
+                `Warning` = basin_alert_fill[2]
+                ) ,
+              alpha = 0.5,
+              border.col = NULL 
+  )+
+  tm_shape(
+    gdf_basin_alert_lines,
+    legend.show=F
+  )+
+  tm_lines(col = "Basin Alert Status",
+           legend.col.show = F,
+             palette=c(hdx_colors()["mint-hdx"],
+                       hdx_colors()["tomato-dark"]),
+           lwd=4,alpha = 0.3
+           )+
+  tm_shape(L$admin_1)+
+  tm_borders(
+    col=hdx_colors()["gray-dark"],
+    alpha = 0.2
+  )+
+  tm_shape(L$river)+
+  tm_lines(
+    col=hdx_colors()["sapphire-hdx" ],
+    lwd=3)+
+  # gauge locations
+  tm_shape(gdf_gauge_pts,
+           legend.show=F
+  )+
+  tm_dots(
+             col="Gauge Status",
+             size= 0.2,
+             palette=c("#25252533","black"),
+             legend.size.show=F
+             )+
+  tm_shape(gdf_basin_alert_poly)+
+  tm_text(text = "basin_name",shadow = T)+
+  tm_layout(main.title.size = 0.5,
+            title.size = 0.5,
+            legend.text.size = 0.5,
+            legend.title.size = 0.7,
+            bg.color = "lightblue")
+  
+}
+```
+
+

@@ -124,12 +124,12 @@ accum_pct_gauges_breached <- function(df,
 }
 
 
-#' Title
+#' gen_plot_title
 #'
 #' @param df 
-#' @param date 
-#' @param threshold 
-#' @param basin_palette 
+#' @param date \code{character} column name containing predicted date
+#' @param threshold \code{numeric} threshold
+#' @param basin_palette named vector containing per basin 
 #'
 #' @return
 #' @export
