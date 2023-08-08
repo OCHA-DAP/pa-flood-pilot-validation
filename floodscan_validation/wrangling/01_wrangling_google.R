@@ -92,7 +92,7 @@ write_csv(
   df_google,
   file.path(
     output_dir,
-    "google_predictions.csv"
+    "google_reanalysis.csv"
   )
 )
 
@@ -245,6 +245,6 @@ df_hybas_fs_04 %>%
   write_csv(
     file.path(
       output_dir,
-      "google_hybas_04_fs_mean_30k.csv"
+      "google_hybas_04_fs_mean.csv"
     )
   )

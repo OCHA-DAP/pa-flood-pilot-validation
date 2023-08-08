@@ -7,6 +7,10 @@ library(patchwork)
 
 gghdx()
 
+gs4_auth(
+  path = Sys.getenv("GFF_JSON")
+)
+
 input_dir <- file.path(
   Sys.getenv("GFH_DATA_DIR"),
   "inputs"
@@ -81,6 +85,9 @@ sf_basins <- list_rbind(basins_list) %>%
 
 
 # floodscan validation data
+# created in wrangling/01_wrangling_google.R
+# it's the avergae flooded area by day from Floodscan for each
+# Google gauge, 30km around the gauge
 
 fs_gauge <- read_csv(
   file.path(
@@ -89,22 +96,31 @@ fs_gauge <- read_csv(
   )
 )
 
+# floodscan validation data
+# created in wrangling/01_wrangling_google.R
+# it's the avergae flooded area by day from Floodscan for each
+# hydrobasin of level 04, across the entire basin area
+
 fs_basin <- read_csv(
   file.path(
     output_dir,
-    "google_hybas_04_fs_mean_30k.csv"
+    "google_hybas_04_fs_mean.csv"
   )
 )
 
 # google historical re-analysis
-
+# parsed from their google sheets in wrangling/01_wrangling_google.R
+# contains all of the historical reanalysis for their final selection of gauges
 google_reanalysis <- read_csv(
   file.path(
     output_dir,
-    "google_predictions.csv"
+    "google_reanalysis.csv"
   )
 )
 
+# the centroids for google gauge basins
+# parsed in wrangling/01_wrangling_google.R
+# is the centroids of the basins that are originally used by Google
 sf_google <- read_sf(
   file.path(
     output_dir,
@@ -267,6 +283,10 @@ gauge_validation <- google_gauge_activations %>%
   group_by(
     hybas_station
   ) %>%
+  arrange(
+    time,
+    .by_group = TRUE
+  ) %>%
   mutate(
     fs_above_threshold_7_days = zoo::rollsum(
       x = fs_above_threshold,
@@ -276,7 +296,25 @@ gauge_validation <- google_gauge_activations %>%
     ) > 0,
     google_id = cumsum(google_activation_2y_rp != lag(google_activation_2y_rp, default = FALSE)),
     fs_id = cumsum(fs_above_threshold_7_days != lag(fs_above_threshold_7_days, default = FALSE)),
+  ) %>%
+  group_by(
+    google_id,
+    .add = TRUE
+  ) %>%
+  mutate(
+    google_activation_consec = ifelse(
+      !google_activation_2y_rp & n() < 7,
+      TRUE,
+      google_activation_2y_rp
+    )
+  ) %>%
+  group_by(
+    hybas_station
+  ) %>%
+  mutate(
+    google_id = cumsum(google_activation_consec != lag(google_activation_consec, default = FALSE))
   )
+  
 
 
 # median flood duration
@@ -400,6 +438,26 @@ gauge_positives <- gauge_validation %>%
     fp = sum(!positive)
   )
 
+# check the consecutive metrics
+# if we group together alerts if they dip below
+
+gauge_positives_consec <- gauge_validation %>%
+  filter(
+    google_activation_consec
+  ) %>%
+  group_by(
+    hybas_station,
+    google_id
+  ) %>%
+  summarize(
+    positive = sum(fs_above_threshold_7_days) > 0,
+    .groups = "drop_last"
+  ) %>%
+  summarize(
+    tp = sum(positive),
+    fp = sum(!positive)
+  )
+
 # false and true negatives
 # although ignoring TN for validation, just using precision/recall
 
@@ -421,6 +479,26 @@ gauge_negatives <- gauge_validation %>%
     .groups = "drop"
   )
 
+# consecutive metrics again
+
+gauge_negatives_consec <- gauge_validation %>%
+  filter(
+    !fs_above_threshold_7_days
+  ) %>%
+  group_by(
+    hybas_station,
+    fs_id
+  ) %>%
+  summarize(
+    negative = sum(google_activation_consec) == 0,
+    .groups = "drop_last"
+  ) %>%
+  summarize(
+    tn = sum(negative),
+    fn = sum(!negative),
+    .groups = "drop"
+  )
+
 # bring metrics together
 
 gauge_metrics <- gauge_positives %>%
@@ -429,9 +507,22 @@ gauge_metrics <- gauge_positives %>%
     by = "hybas_station"
   ) %>%
   mutate(
-    Recall = tp / (tp + fp),
-    Precision = tp / (tp + fn)
+    Precision = tp / (tp + fp),
+    Recall = tp / (tp + fn)
   )
+
+# consec
+
+gauge_metrics_consec <- gauge_positives_consec %>%
+  left_join(
+    gauge_negatives_consec,
+    by = "hybas_station"
+  ) %>%
+  mutate(
+    Precision = tp / (tp + fp),
+    Recall = tp / (tp + fn)
+  )
+
 
 # map the metrics
 
@@ -664,13 +755,10 @@ basin_pcts <- basin_activation %>%
   summarize(
     across(
       .cols = `google_activation_2y_rp`:`google_activation_20y_rp`,
-      .fns = mean
+      .fns = mean,
+      .names = "{str_remove(.col, 'google_activation_')}"
     ),
     .groups = "drop"
-  ) %>%
-  rename_with(
-    .cols = starts_with("google"),
-    .fn = \(x) str_remove(x, "google_activation_")
   )
 
 pcts <- seq(.10, .90, by = .1)
@@ -701,6 +789,23 @@ df_basin_metrics <- map2(
       mutate(
         basin_group = cumsum(activation != lag(activation, default = FALSE)),
         fs_group = cumsum(fs_above_threshold_7_days != lag(fs_above_threshold_7_days, default = FALSE))
+      ) %>%
+      group_by(
+        basin_group,
+        .add = TRUE
+      ) %>%
+      mutate(
+        activation_consec = ifelse(
+          !activation & n() < 7,
+          TRUE,
+          activation
+        )
+      ) %>%
+      group_by(
+        basin_id
+      ) %>%
+      mutate(
+        basin_group_consec = cumsum(activation_consec != lag(activation_consec, default = FALSE))
       )
     
     basin_positives <- basin_valid %>%
@@ -710,6 +815,24 @@ df_basin_metrics <- map2(
       group_by(
         basin_id,
         basin_group
+      ) %>%
+      summarize(
+        positive = sum(fs_above_threshold_7_days) > 0,
+        .groups = "drop_last"
+      ) %>%
+      summarize(
+        tp = sum(positive),
+        fp = sum(!positive),
+        .groups = "drop"
+      )
+    
+    basin_positives_consec <- basin_valid %>%
+      filter(
+        activation_consec
+      ) %>%
+      group_by(
+        basin_id,
+        basin_group_consec
       ) %>%
       summarize(
         positive = sum(fs_above_threshold_7_days) > 0,
@@ -739,18 +862,56 @@ df_basin_metrics <- map2(
         .groups = "drop"
       )
     
+    basin_negatives_consec <- basin_valid %>%
+      filter(
+        !activation_consec
+      ) %>%
+      group_by(
+        basin_id,
+        basin_group_consec
+      ) %>%
+      summarize(
+        negative = sum(fs_above_threshold_7_days) == 0,
+        .groups = "drop_last"
+      ) %>%
+      summarize(
+        tn = sum(negative),
+        fn = sum(!negative),
+        .groups = "drop"
+      )
+    
     basin_metrics <- left_join(
       basin_positives,
       basin_negatives,
       by = "basin_id"
     ) %>%
       mutate(
+        consec = FALSE,
         precision = tp / (tp + fp),
         recall = tp / (tp + fn),
         f1 = precision * recall / (precision + recall),
         threshold = !!pct,
         rp = !!rp
       )
+    
+    basin_metrics_consec <- left_join(
+      basin_positives_consec,
+      basin_negatives_consec,
+      by = "basin_id"
+    ) %>%
+      mutate(
+        consec = TRUE, 
+        precision = tp / (tp + fp),
+        recall = tp / (tp + fn),
+        f1 = precision * recall / (precision + recall),
+        threshold = !!pct,
+        rp = !!rp
+      )
+    
+    bind_rows(
+      basin_metrics,
+      basin_metrics_consec
+    )
   }
 ) %>%
   list_rbind()
@@ -759,7 +920,8 @@ df_basin_metrics <- map2(
 # map out the metrics results
 df_metrics_plot <- df_basin_metrics %>%
   filter(
-    rp != 20
+    rp != 20,
+    !consec
   ) %>%
   pivot_longer(
     precision:f1
@@ -843,10 +1005,9 @@ base_metrics_plot + geom_tile(
   lwd = .5
 )
 
-
 # look at overall metrics across all basins
 
-df_metrics_overall <- df_metrics_plot %>%
+df_metrics_overall <- df_metrics_plot%>%
   group_by(
     threshold,
     rp
@@ -905,13 +1066,164 @@ df_metrics_overall %>%
     fill = "Metric"
   )
 
+
+# map out the metrics results
+# using the consecutive method from zack
+df_metrics_plot_consec <- df_basin_metrics %>%
+  filter(
+    rp != 20,
+    consec
+  ) %>%
+  pivot_longer(
+    precision:f1
+  ) %>%
+  group_by(
+    basin_id,
+    name,
+    rp
+  ) %>%
+  mutate(
+    rp = as.factor(rp),
+    value = replace_na(value, 0),
+    best_rp = value == max(value, na.rm = TRUE),
+    basin_name = factor(
+      case_when(
+        basin_id == 1040760290 ~ "Upper Niger",
+        basin_id == 1040909890 ~ "Lower Niger",
+        basin_id == 1040022420 ~ "Niger Delta",
+        basin_id == 1040909900 ~ "Benue"
+      ),
+      levels = c("Upper Niger", "Lower Niger", "Benue", "Niger Delta")
+    )
+  ) %>%
+  group_by(
+    basin_id,
+    name,
+  ) %>%
+  mutate(
+    best_overall = value == max(value, na.rm = TRUE)
+  )
+
+
+base_metrics_plot_consec <- df_metrics_plot_consec %>%
+  ggplot(
+    aes(
+      x = threshold,
+      y = rp,
+      fill = value
+    )
+  ) +
+  geom_tile(
+    color = "white"
+  ) +
+  facet_grid(
+    rows = vars(basin_name),
+    cols = vars(name),
+    labeller = labeller(.cols = str_to_title)
+  ) +
+  scale_x_continuous(
+    labels = scales::label_percent()
+  ) +
+  scale_fill_gradient(
+    low = "white",
+    high = hdx_hex("mint-hdx")
+  ) + 
+  theme(
+    panel.grid = element_blank()
+  ) +
+  labs(
+    x = "Threshold",
+    y = "Return period",
+    fill = "Metric"
+  )
+
+base_metrics_plot_consec
+
+# look at overall best perofmring options
+base_metrics_plot_consec + geom_tile(
+  data = filter(df_metrics_plot_consec, best_overall),
+  fill = NA,
+  color = hdx_hex("gray-dark"),
+  lwd = .5
+)
+
+# look at best performing by RP if we want to look at RPs
+
+base_metrics_plot_consec + geom_tile(
+  data = filter(df_metrics_plot_consec, best_rp),
+  fill = NA,
+  color = hdx_hex("gray-dark"),
+  lwd = .5
+)
+
+# look at overall metrics across all basins
+
+df_metrics_overall_consec <- df_metrics_plot_consec %>%
+  group_by(
+    threshold,
+    rp
+  ) %>%
+  summarize(
+    across(
+      .cols = tp:fn,
+      .fns = sum
+    )
+  ) %>%
+  mutate(
+    precision = tp / (tp + fp),
+    recall = tp / (tp + fn),
+    f1 = precision * recall / (precision + recall)
+  ) %>%
+  pivot_longer(
+    precision:f1
+  ) %>%
+  group_by(
+    rp,
+    name
+  ) %>%
+  mutate(
+    best = value == max(value)
+  )
+
+df_metrics_overall_consec %>%
+  ggplot(
+    aes(
+      x = threshold,
+      y = rp,
+      fill = value
+    )
+  ) +
+  geom_tile() +
+  facet_wrap(
+    ~ name,
+    labeller = labeller(.cols = str_to_title)
+  ) +
+  scale_x_continuous(
+    labels = scales::label_percent()
+  ) +
+  scale_fill_gradient(
+    low = "white",
+    high = hdx_hex("mint-hdx")
+  ) + 
+  scale_color_manual(
+    values = c("white", "black")
+  ) +
+  theme(
+    panel.grid = element_blank()
+  ) +
+  labs(
+    x = "Threshold",
+    y = "Return period",
+    fill = "Metric"
+  )
+
 #################################################################
 #### CHECK FREQUENCY OF ACTIVATION BASED ON THESE THRESHOLDS ####
 #################################################################
 
 final_activations <- basin_pcts %>%
   mutate(
-    activation_2y = `2y_rp` >= 1,
+    activation_2y = `2y_rp` >= 0.8,
     activation_5y = `2y_rp` >= 0.5,
     activation_20y = `2y_rp` > 0.2,
     basin_name = factor(
