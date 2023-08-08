@@ -80,7 +80,7 @@ df_google <- map(
   .x = list.files(
     file.path(
       input_dir,
-      "historic_forecasts"
+      "historic_nowcasts"
     ),
     full.names = TRUE
   ),
@@ -92,7 +92,7 @@ write_csv(
   df_google,
   file.path(
     output_dir,
-    "google_predictions.csv"
+    "google_reanalysis.csv"
   )
 )
 
@@ -112,9 +112,9 @@ sf_hybas <- read_sf(
   ) %>%
   st_make_valid()
   
-################################
-#### GOOGLE FINAL WRANGLING ####
-################################
+#############################
+#### FLOODSCAN WRANGLING ####
+#############################
 
 # we will use centroids of the basins to buffer for floodscan data
 
@@ -129,7 +129,7 @@ write_sf(
   )
 )
 
-st_hybas_buffer <- st_hybas_centroids %>%
+sf_hybas_buffer <- sf_hybas_centroids %>%
   st_transform("+proj=aeqd +lat_0=7.974 +lon_0=5.692") %>%
   st_buffer(
     dist = 30000
@@ -172,7 +172,7 @@ df_hybas_fs <- map(
 df_hybas_fs %>%
   left_join(
     data.frame(
-      ID = 1:20,
+      ID = 1:60,
       HYBAS_ID = sf_hybas$HYBAS_ID
     ),
     by = "ID"
@@ -187,140 +187,24 @@ df_hybas_fs %>%
     )
   )
 
-#####################
-#### GloFAS DATA ####
-#####################
+############################################
+#### REPEAT THIS FOR ALL BASINS LEVEL 4 ####
+############################################
 
-glofas_nc_files <- list.files(
-  file.path(
-    Sys.getenv(
-      "OAP_DATA_DIR"
-    ),
-    "public",
-    "processed",
-    "nga",
-    "glofas"
-  ),
-  full.names = TRUE
-)
-
-# get station data from specific GloFAS NC
-get_station_data <- function(nc, station) {
-  station_data <- ncvar_get(
-    nc = nc,
-    varid = station,
-    start = c(7, 1, 1), # 7 day ahead forecast
-    count = c(1, -1, -1)
-  )
-  
-  ensemble <- apply( # take median of ensembles
-    X = station_data,
-    MARGIN = 1,
-    FUN = median
-  )
-  
-  data.frame(
-    station = station,
-    glofas_forecast = ensemble
-  )
-}
-
-# get glofas data from a specific NetCDF file
-get_glofas_data <- function(nc) {
-  dates <- as.character(as.PCICt(nc$dim$time$vals, cal = "proleptic_gregorian", origin = "1970-01-01"))
-  stations <- c(
-    "Benue A Makurdi",
-    "Benue A Umaisha",
-    "Benue A Wuro Boki",
-    "Ibi",
-    "Kaduna A Wuya",
-    "Katsina Ala A Katsina Ala",
-    "Lokoja",
-    "Na",
-    "Niger A  Jebba Downstream Dam",
-    "Niger A Baro",
-    "Niger A Onitsha",
-    "Sokoto A Kende",
-    "Yidere Bode"
-  )
-  
-  map(
-    .x = stations,
-    .f = \(x) get_station_data(nc = nc, station = x)
-  ) %>%
-    list_rbind() %>%
-    mutate(
-      date = rep(as.Date(dates), length(stations))
-    )
-}
-
-# read in and process GloFAS data 
-read_glofas_data <- function(fp) {
-  nc <- nc_open(filename = fp)
-  get_glofas_data(nc)
-}
-
-df_glofas <- map(
-  .x = glofas_nc_files,
-  .f = read_glofas_data
-) %>%
-  list_rbind() %>%
-  complete(
-    station,
-    date = seq(as.Date("1999-01-03"), as.Date("2018-12-30"), by = 1)
-  ) %>%
-  group_by(
-    station
-  ) %>%
-  mutate(
-    interpolated = is.na(glofas_forecast),
-    glofas_forecast = spline(date, glofas_forecast, n = n())$y
-  ) %>%
-  ungroup()
-
-write_csv(
-  x = df_glofas,
-  file = file.path(
-    output_dir,
-    "glofas_forecasts_until_2018.csv"
-  )
-)
-
-###############################
-#### GloFAS Floodscan data ####
-###############################
-
-glofas_yaml <- yaml::read_yaml(
+sf_hybas_04 <- read_sf(
   file.path(
     input_dir,
-    "nga_niger_benue.yaml"
+    "hybas_af_lev01-12_v1c",
+    "hybas_af_lev04_v1c.shp"
   )
-)
-
-sf_glofas_pts <- glofas_yaml$glofas %>%
-  as_tibble() %>%
-  mutate(
-    reporting_points = map(reporting_points, as_tibble)
-  ) %>%
-  unnest(
-    reporting_points
-  ) %>%
-  st_as_sf(
-    coords = c("lon", "lat"),
-    crs = "EPSG:4326"
+) %>%
+  st_make_valid() %>%
+  st_filter(
+    sf_hybas_centroids,
+    .predicate = st_contains
   )
 
-# get buffer around points for getting floodscan data like we did with Google
-sf_glofas_buffer <- sf_glofas_pts %>%
-  st_transform("+proj=aeqd +lat_0=7.974 +lon_0=5.692") %>%
-  st_buffer(
-    dist = 30000
-  ) %>%
-  st_transform(
-    "EPSG:4326"
-  )
-
-df_glofas_fs <- map(
+df_hybas_fs_04 <- map(
   1:9120,
   .f = \(n) {
     fs_rast <- rast(
@@ -332,7 +216,7 @@ df_glofas_fs <- map(
     
     extract(
       x = fs_rast,
-      y = sf_glofas_buffer,
+      y = sf_hybas_04,
       fun = mean,
       weights = TRUE
     ) %>%
@@ -346,13 +230,21 @@ df_glofas_fs <- map(
     time = as.Date(time, origin = "1998-01-12")
   )
 
-df_glofas_fs %>%
+
+df_hybas_fs_04 %>%
+  left_join(
+    data.frame(
+      ID = 1:7,
+      HYBAS_ID = sf_hybas_04$HYBAS_ID
+    ),
+    by = "ID"
+  ) %>%
   rename(
     sfed = lyr.1
   ) %>%
   write_csv(
     file.path(
       output_dir,
-      "glofas_fs_mean_30k.csv"
+      "google_hybas_04_fs_mean.csv"
     )
   )
