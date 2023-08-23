@@ -133,33 +133,33 @@ list(
   ),
 
   # remove any potential duplicate records by taking latest update_time_utc per date
+  
+  
+    
   tar_target(
-    name = gauge_google_wb,
+    name = gauge_data_google,
     command = gauge_google_wb_full %>%
-      imap(\(df, name_df){
-        gauge_realtime_names <- str_subset(name_df, "^hybas_.*$")
-        ret <- df
-        if (name_df %in% gauge_realtime_names) {
-          ret <- df %>%
-            mutate(
-              date = dmy(date),
-              update_time_utc = ymd_hms(update_time_utc)
-            ) %>%
-            group_by(date) %>%
-            filter(
-              update_time_utc == max(update_time_utc)
-            ) %>%
-            ungroup()
-        }
-        return(ret)
-      })
+      keep_at(
+        at = ~ str_detect(.x, "hybas_") # gauge data prefix
+        ) %>%
+      bind_rows() %>%
+      mutate(
+        date = dmy(date),
+        update_time_utc = ymd_hms(update_time_utc)
+      )  %>% 
+      # rm any potential duplicate date (take latest update)
+      group_by(gauge_id,date) %>% 
+      filter(update_time_utc==max(update_time_utc)) %>% 
+      ungroup()
   ),
   tar_target(
     name = g_realtime_gauge,
-    command = gauge_google_wb %>%
-      keep_at(at = ~ str_detect(.x, "hybas_")) %>%
-      bind_rows() %>%
-      mutate(date = dmy(date))
+    command = gauge_data_google %>%
+      group_by(gauge_id) %>%
+      filter(
+        date == max(date), # get max date per gauge
+      ) %>%
+      ungroup()
   ),
   ### Google historical-reanalysis (nowcast) ####
   # compile all historical data into one data.frame
@@ -182,7 +182,8 @@ list(
   # create spatial object of gauge locations
   tar_target(
     name = gauge_google_sp,
-    command = st_as_sf(gauge_google_wb$metadata, coords = c("longitude", "latitude"), crs = 4326)
+    command = st_as_sf(gauge_google_wb_full$metadata,
+                       coords = c("longitude", "latitude"), crs = 4326)
   ),
   # assign each gauge to a basin (for both basin levels 4 & 5)
   tar_target(
@@ -201,7 +202,7 @@ list(
     name = google_historical_class,
     command = classify_google_historical_data(
       historical = google_historical,
-      rp_df = gauge_google_wb$return_period
+      rp_df = gauge_google_wb_full$return_period
     )
   ),
   # take the classified now class data and just add the basin id's
