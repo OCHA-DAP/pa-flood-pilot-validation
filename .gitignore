@@ -10,3 +10,7 @@ exploration/hybas_exploration_files/*
 *.html
 
 google_flood_pilot_key.json
+
+*.pdf
+*.png
+pdf_design/*
