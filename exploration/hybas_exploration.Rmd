@@ -1,0 +1,547 @@
+---
+title: "Basin aggregation"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: true
+        toc_depth: 4
+date: "2023-06-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  eval = TRUE,
+  results = "asis"
+)
+```
+
+
+
+```{r libsData}
+library(tmap)
+library(targets)
+library(here)
+library(sf)
+library(tidyverse)
+library(gt)
+library(glue)
+library(gghdx)
+library(ggiraph)
+library(janitor)
+gghdx()
+
+tar_load(gauges_basin_google) # gauge nowcast w/ basin
+tar_load(basins_clipped)
+tar_load(gauge_google_sp)
+tar_load(nga_adm)
+tar_load(gauge_google_wb) # forecast @ gauge & gauge metdata
+tar_load(google_historical) # gauge nowcast/historical
+tar_load(google_historical_basin) # nowcast attached to each basin & classified by RP
+tar_load(nga_riv) # rivers
+```
+
+# HydroBasins
+
+## Data
+
+**Forecast Data :** We currently have a data set containing **20** gauges that are being monitored by google. They will soon be adding more so that **~150** gauges will be included. This data monitors river discharge for the current day and 1-7 day lead times.
+
+**Historical Data:** For the gauges present in the forecast data set we have historical reanalysis data back to 1981. It is not hindcast data, but rather simulated river discharge for each day.
+
+**Watersheds/Basins:** [HydroSHEDS](Swww.hydrosheds.org) (Lehner,B. & Grill, G., 2013)
+
+## Spatial Aggregation?
+
+In order to set up a monitoring framework based on the for forecast data described above we need to figure out a level to aggregate data to at which an alert system can flag anomalies/trigger events. Watersheds make sense from a hydrological perspective. However, watersheds can be delineated at any scale **asdfadfa**. Therfore, we explore to basin sizes that visually appear to be at the appoximate size desired
+
+```{r}
+# may want to make a simple function of this to add to _targets pipeline for when the google data is updated
+df_count_gauge_per_basin <- gauges_basin_google %>% 
+  map(\(gauge_df){
+    gauge_df %>% 
+      st_drop_geometry() %>% 
+      count(HYBAS_ID) 
+  
+  }) %>% 
+  set_names(c("Basin Level 4","Basin Level 5"))
+
+tbl_count_gauge_per_basin <- df_count_gauge_per_basin %>% 
+  imap(
+    \(dft,basin_level)
+    dft %>% 
+      gt() %>% 
+      tab_header(title = "Number of gauges per basin",
+                 subtitle =  basin_level)
+  )
+```
+
+```{r}
+map_basins_state <- basins_clipped %>% 
+  map2(c("Basin level 4","Basin level 5"),
+       \(basin_sp,basin_lev){
+    map_title <-  glue("{basin_lev} (blue) & NGA State/adm1 (red)" )
+     tm_shape(nga_adm$adm1)+
+      tm_polygons(col = "#EEEEEE" ,border.col =  "red")+ # make pol
+       tm_shape(basin_sp)+
+      tm_borders(col="blue")+
+      tm_shape(gauge_google_sp)+
+      tm_dots(size  = 0.5)+
+      tm_layout(title=map_title)
+  }
+  )
+
+maps_basin_choro_gauge_count<- pmap(list(basins_clipped,df_count_gauge_per_basin,names(df_count_gauge_per_basin)),
+     \(poly_basin,df_counts,txtname){
+       poly_basin_w_count <- poly_basin %>% 
+         left_join(df_counts)
+       
+       tm_shape(poly_basin_w_count)+
+         tm_polygons(col="n")+
+         tm_shape(nga_adm$adm0)+
+         tm_borders(col = "red")+
+         tm_shape(gauge_google_sp)+
+         tm_dots(size  = 0.2)+
+         tm_layout(title=txtname)
+     }
+)
+
+```
+
+**Basin Level 4**
+
+```{r, results="asis"}
+tmap_mode("plot")
+map_basins_state$hybas_af_lev04_v1c
+tbl_count_gauge_per_basin$`Basin Level 4`
+```
+
+**Basin Level 5**
+
+```{r, results="asis"}
+map_basins_state$hybas_af_lev05_v1c
+tbl_count_gauge_per_basin$`Basin Level 5`
+```
+
+**Map Gauge Count per Basin**
+
+Basin level 4 
+
+```{r map-gaugeCountB4}
+# for some reason both titles just show up on this map
+tmap_mode("view")
+maps_basin_choro_gauge_count$hybas_af_lev04_v1c
+```
+
+Basin Level 5
+
+```{r map-gaugeCountB5}
+maps_basin_choro_gauge_count$hybas_af_lev05_v1c
+```
+
+## Flagging/Alert System Ideas
+
+Google has calculated 2,5,20 year return period levels for each gauge. So we can potentially use these or other year RPs as thresholds. However, flagging on individual gauges will be noisy - therefore let's look into aggregating by basin.
+
+**Note:** forecast data only has 3-4 records at the moment so we will look at the **nowcast** data for testing.
+
+```{r}
+gauge_google_wb$return_period %>% 
+  gt() %>% 
+  fmt_number(decimals = 0) %>% 
+  tab_header(title = "RP values at each gauge (m3/s)") 
+```
+
+### Explore Historical Reanalysis/now
+
+Quickly see very different discharge dynamics at different gauges. Some of these different characteristics are captured by RP values so let's see how it looks if colored by RP value. It makes sense, the further we go downstream the higher the RP 2 values.
+
+```{r out.width="100%", fig.align="center"}
+google_historical_basin$hybas_af_lev04_v1c %>% 
+  ggplot(aes(x=time, y= prediction,group=gauge_id))+
+  geom_line()+
+  labs(y="predicted discharge (m3/s)")+
+  facet_wrap(
+    ~str_remove(gauge_id,"hybas_")# make title smaller
+    )+
+  theme(
+    axis.text.x =   element_text(angle=90),
+    axis.title.x = element_blank()
+  )
+
+# wide format could be useful for PCA?
+# google_historical_basin$hybas_af_lev04_v1c %>% 
+#   select(time,gauge_id,prediction) %>% 
+#   pivot_wider(names_from = gauge_id, values_from = prediction)
+```
+
+```{r map-gaugeDischarge}
+tmap_mode("plot")
+gauge_sp_w_rp<- gauge_google_sp %>% 
+  left_join(gauge_google_wb$return_period)
+
+tm_shape(nga_adm$adm0)+
+  tm_polygons(col = "#EEEEEE"  ,border.col = "darkgrey")+
+  tm_shape(basins_clipped$hybas_af_lev04_v1c)+
+  tm_borders(col="blue")+
+  tm_shape(nga_riv)+
+  tm_lines(col = "lightblue",lwd = 3)+
+  tm_shape(gauge_sp_w_rp)+
+  tm_dots(size  = 0.5,
+          col = "x2_year_return_period",
+          title = "2 year RP")
+```
+
+### Aggregate Flagging
+
+We had the idea that we could use RP values as thresholds, but that we would want to aggregate gauge data to some level (basins). 
+
+- pct thresholds: if >= x % of gauges in basin cross the RP threshold then we flag
+  + will start with x= 50 % and RP = 2 year
+
+```{r}
+pct_gauges_gt_rp2_by_day<- google_historical_basin %>% 
+  map(\(dft){
+    dft %>% 
+      group_by(hybas_id = as.character(HYBAS_ID),
+               yr=year(time),
+               time) %>% 
+      summarise(
+        num_gauge = n(),
+        num_gauge_gt_rp2 = sum(gte_rp2),
+        pct_gauge_gt_rp2 = num_gauge_gt_rp2/num_gauge,.groups = "drop"
+      )
+  })
+
+p_pct_gauges_gt_rp2<- pct_gauges_gt_rp2_by_day %>% 
+  map2(c("Basin level 4","Basin level 5"),\(dft,basin_lev){
+    p_title <- glue("% gauges > 2 year RP level")
+    dft  %>% 
+
+      ggplot(aes(x=time, y=pct_gauge_gt_rp2))+
+      geom_line()+
+      geom_point()+
+      labs(y= "% gauges",title = p_title,subtitle = basin_lev)+
+      facet_wrap(~hybas_id)+
+      theme(axis.title.x = element_blank())
+      
+  }
+  )
+```
+
+The plots below show % gauges > 2 year RP value across entire historical time line at basin level 4 & 5. It's already fairly clear that at the basin level > 50 % gauges above the 2 year RP is occurring > every 2 years.
+
+```{r out.width="100%", fig.align="center"}
+p_pct_gauges_gt_rp2 %>% 
+  walk(~print(.x))
+```
+
+It's clear that co-occurrence of gauges > 2 year RP happens due to the shape of the stream discharge curve. When the threshold is crossed it generally stays above for multiple days as it peaks and then falls. You can see this in the two tables below.
+
+```{r}
+trigs_by_basin_day<- pct_gauges_gt_rp2_by_day %>% 
+  map(\(dft){
+    dft %>% 
+      mutate(
+        basin_50pct =pct_gauge_gt_rp2>=0.5
+      ) %>% 
+      group_by(
+        hybas_id,
+        yr,
+        time,
+        ) %>% 
+      summarise(
+        num_trig = sum(basin_50pct)
+      ) %>% 
+      ungroup()
+  }) 
+
+
+tbl_days_gt_2_yr_rp <- trigs_by_basin_day %>% 
+    imap(\(dft,bas_lev){
+      dft %>% 
+      group_by(hybas_id) %>% 
+      summarise(
+        num_trig = sum(num_trig)
+      ) %>% 
+        gt() %>% 
+        tab_header(title = "# Days with at least 50 % gauges reading >= 2 year RP level",subtitle = bas_lev)
+    }
+    )
+
+```
+
+```{r}
+tbl_days_gt_2_yr_rp %>% 
+  walk(~print(.x))
+```
+
+In order to analyze the data to better understand how potential triggers would activate/behave over time we have to take the shape of the discharge curve(s) into account. Therefore, rather counting every value that is greater than threshold (i.e 2 year RP), let's focus on when the moment when the thresholds is first crossed from (below), in other words, breached.
+
+**Threshold Breaches**
+
+From here on out we will use the term threshold breach to refer to 
+So how to account for consecutive days - instead of flagging **every day** the discharge is above the RP value let's flag only the initial crossings.
+
+```{r plot-allBreach, out.width="100%", fig.align="center"}
+google_historical_basin$hybas_af_lev04_v1c %>% 
+  mutate(
+    hybas_id = as.character(HYBAS_ID)
+  ) %>% 
+  ggplot(aes(x=time, y= prediction, group=gauge_id))+
+  geom_vline(data=. %>% 
+               filter(rp_2_flag),
+             aes(xintercept = time), 
+             alpha=0.1,
+             lwd=1,
+             color="red"
+             )+
+  geom_line(alpha=0.4)+
+  facet_wrap(~hybas_id)+
+  labs(
+    title = "Gauge discharge by basin (level 4)",
+    subtitle = "Red lines mark any threshold breach from any gauge in basin"
+  )
+```
+
+Hypothetical example just for comparison where we only aggregate % breachs that occur on same day. This just for comparison sake. It doesn't make sense that we should only consider breach on same exact day within a basin.
+```{r createTblDaysBreachGte50}
+pct_gauges_flagged_day <- google_historical_basin %>% 
+  map(\(dft){
+    dft %>% 
+      group_by(hybas_id = as.character(HYBAS_ID),
+               yr=year(time),
+               time) %>% 
+      summarise(
+        num_gauge = n(),
+        num_gauge_gt_rp2 = sum(rp_2_flag),
+        pct_gauge_gt_rp2 = num_gauge_gt_rp2/num_gauge,.groups = "drop"
+      )
+  })
+
+# this plot is not being displayed
+p_pct_gauges_rp2_flag<- pct_gauges_flagged_day %>% 
+  map2(c("Basin level 4","Basin level 5"),\(dft,basin_lev){
+    p_title <- glue("% gauges > 2 year RP level")
+    dft  %>% 
+      ggplot(aes(x=time, y=pct_gauge_gt_rp2))+
+      geom_line()+
+      geom_point()+
+      labs(y= "% gauges",title = p_title,subtitle = basin_lev)+
+      facet_wrap(~hybas_id)+
+      theme(axis.title.x = element_blank())
+      
+  }
+  )
+
+flags_by_basin_day<- pct_gauges_flagged_day %>% 
+  map(\(dft){
+    dft %>% 
+      mutate(
+        basin_50pct =pct_gauge_gt_rp2>=0.5
+      ) %>% 
+      group_by(
+        hybas_id,
+        yr,
+        time,
+        ) %>% 
+      summarise(
+        num_trig = sum(basin_50pct)
+      ) %>% 
+      ungroup()
+  }) 
+
+
+tbl_days_rp2_flags <- flags_by_basin_day %>% 
+    imap(\(dft,bas_lev){
+      dft %>% 
+      group_by(hybas_id) %>% 
+      summarise(
+        num_trig = sum(num_trig)
+      ) %>% 
+        gt() %>% 
+        tab_header(title = "# Days with at least 50 % gauges reading >= 2 year RP level",subtitle = bas_lev)
+    }
+    )
+```
+
+```{r tbl-DaysGte50}
+tbl_days_rp2_flags %>% 
+  walk(~print(.x))
+```
+
+
+```{r createPlotPctBreached}
+tar_load(ghistorical_rp2_breach_pct_basin_gauges)
+p_pct_breach_exceed <- ghistorical_rp2_breach_pct_basin_gauges %>% 
+  map2(c("Basin Level 4","Basin Level 5"),\(dft,p_subtitle){
+    dft %>% 
+      # so if multiple breaches w/ in same basin occur on same day they
+      # get counted 2x -- therefor i remove the duplicate-
+      # should add this to step above, but too impatient to wait for it
+      # to run right now
+      group_by(hybas_id,date) %>% 
+      slice(1) %>% 
+      ungroup() %>% 
+      ggplot(aes(x=date,
+                 y=pct_crossed,
+                 group=hybas_id,
+                 color=hybas_id))+
+      geom_line()+
+      geom_point()+
+      # geom_point_interactive(aes(tooltip=date)) +
+      scale_color_brewer(type="qual")+
+      scale_y_continuous(breaks = seq(0,1,.125),
+                         labels = scales::percent)+
+      scale_x_date(breaks="1 year",date_labels = "%Y")+
+      geom_hline(yintercept = 0.5,color="red",linetype="dashed")+
+      labs(
+        y="% Gauges",
+        title= "% Gauges exceeding 2 year RP",
+        subtitle=p_subtitle,
+        caption = "Each time a 2 year RP level was breached for any gauge the % of gauges within the basin that also had values exceeding there 2 year RP in +/-5 days was calculated. Basins with 1 or less gauge excluded."
+      )+
+      theme(
+        axis.title.x = element_blank(),
+        plot.caption = element_text(hjust = 0),
+        axis.text.x = element_text(angle=90)
+      )
+  }
+  )
+# ggiraph(ggobj = p_pct_breach_exceed$hybas_af_lev04_v1c)
+```
+
+
+```{r plot-pctBreached, out.width="100%", fig.align="center"}
+p_pct_breach_exceed %>% 
+  walk(~print(.x))
+```
+
+```{r createBreachSummaryFreq}
+df_freq_breach_summary_basin <- ghistorical_rp2_breach_pct_basin_gauges %>% 
+  map(\(dft){
+    dft %>% 
+      complete(
+        hybas_id,
+        date = seq(as.Date("1982-01-01"), as.Date("2021-10-24"), by = 1),
+        fill = list(pct_crossed=0)
+      ) %>% 
+      mutate(
+        gte_50pct =pct_crossed>=0.5,
+        breach_class= case_when(
+          pct_crossed == 0~ "No breach",
+          gte_50pct ~ "Breach w/ >=50 % gauges crossing in +/- 5 days",
+          !gte_50pct ~ "Breach w/ < 50 % gauges crossing in +/- 5 days"
+        )
+      ) %>% 
+      group_by(hybas_id,breach_class) %>% 
+      summarise(
+        n=n(),.groups = "drop_last"
+      ) %>% 
+      mutate(
+        pct =n/sum(n)
+      ) %>% ungroup()
+      
+  })
+
+df_freq_breach_summary <- df_freq_breach_summary_basin %>% 
+  map(
+    \(dft)
+    dft %>% 
+      group_by(
+        breach_class
+      ) %>% 
+      summarise(
+        n=sum(n),.groups="drop"
+      ) %>% 
+      mutate(
+        pct= n/sum(n)
+      )
+  )
+```
+
+```{r tbl-breachSummary}
+df_freq_breach_summary %>% 
+  walk(
+    \(dft) 
+    dft%>% 
+      gt() %>% 
+      fmt_percent(columns = pct) %>% 
+      tab_header("Frequency of breach type")
+  )
+```
+
+```{r tbl-breachSummaryBasin}
+df_freq_breach_summary_basin %>% 
+  walk(
+    \(dft) 
+    dft%>% 
+      gt() %>%
+      fmt_percent(columns = pct) %>% 
+      tab_header("Frequency of breach type by basin")
+  )
+```
+
+
+```{r createAnim, map-animation2019,eval=F}
+hybas_sel <- google_historical_basin$hybas_af_lev04_v1c %>% 
+  clean_names() %>% 
+  filter(
+    hybas_id ==1040909890,
+    year(time)%in% c(2019,2020,2021,2022)
+  ) %>% 
+  select(
+    gauge_id,
+    date= time, 
+    prediction,
+    matches("_rp|rp_")
+  )
+
+
+hybas_sel_sp <- gauge_google_sp %>% 
+  filter(gauge_id %in% hybas_sel$gauge_id) %>% 
+  left_join(hybas_sel, by="gauge_id") 
+
+hybas_sel2019 <- hybas_sel_sp %>% 
+  filter(date>="2019-08-21",date<="2019-09-20") %>% 
+  mutate(predlog = log(prediction))
+
+
+m_hybas_flow <-
+  tm_shape(nga_adm$adm0,bbox=nga_adm$adm0)+
+  tm_polygons(col = "#EEEEEE"  ,
+              border.col = "darkgrey")+
+  tm_shape(basins_clipped$hybas_af_lev04_v1c
+          )+
+  tm_borders(col="blue")+
+  tm_shape(nga_riv)+
+  tm_lines(col = "lightblue",lwd = 3)+
+  tm_shape(hybas_sel2019) +
+  tm_bubbles(size = "prediction",
+             col = "gte_rp2",
+             scale =2 ,
+             n=7,
+             legend.size.is.portrait=TRUE, 
+             # breaks=c(0,100,200,500,1000,1500,2000),
+             # style= "quantile"
+             )+
+  # tm_text(text = "gauge_id")+
+  tm_facets(along = "date",
+            nrow = 1,
+            ncol=1)
+
+tmap_animation(m_hybas_flow, 
+               filename="basin_gauge_ex.gif",
+               width=800, 
+               delay=100,
+               loop = T
+               )
+```
+
+```{r loadAnim, fig.show='animate', ffmpeg.format='gif', eval=F}
+# this isn't loading in html file - but we exported it for gslide
+anim_gif<- magick::image_read(here::here("basin_gauge_ex.gif"))
+anim_gif
+```
